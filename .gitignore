@@ -1,0 +1,14 @@
+# Ignore Python virtual environments
+venv/
+env/
+.venv/
+agent/venv/
+agent/env/
+# macOS
+.DS_Store
+# Node
+node_modules/
+# VSCode
+.vscode/
+# Logs
+*.log
