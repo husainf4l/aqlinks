@@ -1,105 +1,36 @@
-# AQL - WebRTC Room Management System
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-**High-Performance WebRTC Room System - LiveKit Competitor**
+## Getting Started
 
-A full-stack WebRTC application with separate backend and frontend components designed to outperform LiveKit in performance, cost, and agent integration.
+First, run the development server:
 
-## 📁 Repository Structure
-
-```
-aql-project/
-├── aql-go/           # Backend: High-performance Go server
-│   ├── main.go       # WebRTC server with Pion
-│   ├── go.mod        # Go dependencies
-│   └── README.md     # Backend documentation
-│
-└── aqlinks/          # Frontend: Next.js client
-    ├── src/          # React components
-    ├── package.json  # Node dependencies
-    └── README.md     # Frontend documentation
-```
-
-## 🎯 Project Goals
-
-Build a WebRTC system that's **20% better than LiveKit**:
-- **Performance:** 50,000+ users/server (vs 40k)
-- **Latency:** 80ms end-to-end (vs 100ms)
-- **Cost:** 20% cheaper to operate
-- **Features:** Native AI agent integration
-
-## 🚀 Quick Start
-
-### Backend (Go)
 ```bash
-cd aql-go
-go mod tidy
-go run main.go
-```
-
-### Frontend (Next.js)
-```bash
-cd aqlinks
-npm install
 npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
 
-## 🏗️ Architecture
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-- **Backend:** Go + Pion WebRTC + GraphQL
-- **Frontend:** Next.js + TypeScript + WebRTC
-- **Database:** PostgreSQL + Redis
-- **Deployment:** Docker + Kubernetes
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-## 📊 Performance Targets
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-| Metric | Target | LiveKit | Improvement |
-|--------|--------|---------|-------------|
-| Users/Server | 50,000+ | 40,000 | +25% |
-| Latency | <80ms | <100ms | +20% |
-| Memory | -20% | Baseline | More efficient |
-| Cost | -20% | Baseline | Cheaper |
+## Learn More
 
-## 🔧 Development
+To learn more about Next.js, take a look at the following resources:
 
-### Prerequisites
-- Go 1.25+
-- Node.js 18+
-- PostgreSQL
-- Redis
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-### Setup
-```bash
-# Clone repository
-git clone https://github.com/husainf4l/aqlinks.git
-cd aqlinks
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-# Setup backend
-cd aql-go
-go mod tidy
+## Deploy on Vercel
 
-# Setup frontend
-cd ../aqlinks
-npm install
-```
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-## 📈 Roadmap
-
-- **Phase 1:** Core room management (Week 1-2)
-- **Phase 2:** WebRTC integration (Week 3-4)
-- **Phase 3:** Agent support (Week 5-6)
-- **Phase 4:** Production ready (Week 7-8)
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch
-3. Make changes
-4. Submit pull request
-
-## 📄 License
-
-MIT License - see LICENSE file for details.
-
----
-
-**Built to compete with LiveKit, designed to exceed it.** 🚀
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

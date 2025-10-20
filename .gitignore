@@ -1,14 +1,36 @@
-# Ignore Python virtual environments
+# Python virtual environments
 venv/
 env/
 .venv/
 agent/venv/
 agent/env/
-# macOS
-.DS_Store
-# Node
+agent/__pycache__/
+
+# Dependencies
 node_modules/
-# VSCode
-.vscode/
-# Logs
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Testing
+coverage/
+
+# Misc
+.DS_Store
 *.log
+.env
+.env.local
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
