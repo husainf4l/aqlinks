@@ -26,6 +26,18 @@ func InitContext(ctx *SFUContext) {
 	sfuCtx = ctx
 }
 
+// GetPeerCount returns the number of active peer connections
+func GetPeerCount() int {
+	if sfuCtx == nil {
+		return 0
+	}
+
+	sfuCtx.ListLock.RLock()
+	defer sfuCtx.ListLock.RUnlock()
+
+	return len(*sfuCtx.PeerConnections)
+}
+
 // DispatchKeyFrame sends a keyframe to all PeerConnections, used everytime a new user joins the call.
 func DispatchKeyFrame() {
 	if sfuCtx == nil {
