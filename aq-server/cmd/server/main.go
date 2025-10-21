@@ -8,10 +8,18 @@
 package main
 
 import (
+	"log"
+
 	"aq-server/internal/app"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load .env file (if it exists)
+	if err := godotenv.Load(); err != nil {
+		log.Println("⚠️  No .env file found, using environment variables")
+	}
+	
 	application, err := app.New()
 	if err != nil {
 		panic(err)

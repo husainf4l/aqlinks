@@ -1,0 +1,38 @@
+# Environment variables (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+server
+cmd/server/server
+*.o
+*.a
+*.so
+
+# Logs
+*.log
+server.log
+
+# Backup files
+*.bak
+index.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binaries
+/bin/
+/dist/
+
+# Temporary files
+tmp/
+temp/
