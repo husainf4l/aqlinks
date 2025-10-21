@@ -9,8 +9,7 @@ import (
 
 // Company represents a tenant company
 type Company struct {
-	ID        uint      `gorm:"primaryKey;autoIncrement"`
-	CompanyID string    `gorm:"uniqueIndex;type:varchar(50);not null"`
+	ID        string    `gorm:"primaryKey;type:varchar(50)"`
 	Name      string    `gorm:"type:varchar(255);not null"`
 	APIKey    string    `gorm:"uniqueIndex;type:varchar(255);not null"`
 	SecretKey string    `gorm:"type:varchar(255);not null"`
@@ -21,17 +20,16 @@ type Company struct {
 	Metadata  datatypes.JSON `gorm:"type:jsonb;default:'{}';serializer:json"`
 
 	// Relations
-	Tokens   []Token   `gorm:"foreignKey:CompanyIDFK;references:ID;constraint:OnDelete:CASCADE"`
-	Rooms    []Room    `gorm:"foreignKey:CompanyIDFK;references:ID;constraint:OnDelete:CASCADE"`
-	Sessions []Session `gorm:"foreignKey:CompanyIDFK;references:ID;constraint:OnDelete:CASCADE"`
-	APIKeys  []APIKey  `gorm:"foreignKey:CompanyIDFK;references:ID;constraint:OnDelete:CASCADE"`
+	Tokens   []Token   `gorm:"foreignKey:CompanyID;references:ID;constraint:OnDelete:CASCADE"`
+	Rooms    []Room    `gorm:"foreignKey:CompanyID;references:ID;constraint:OnDelete:CASCADE"`
+	Sessions []Session `gorm:"foreignKey:CompanyID;references:ID;constraint:OnDelete:CASCADE"`
+	APIKeys  []APIKey  `gorm:"foreignKey:CompanyID;references:ID;constraint:OnDelete:CASCADE"`
 }
 
 // Token represents an access token for room access
 type Token struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement"`
-	CompanyIDFK uint      `gorm:"index;not null"`
-	CompanyID   string    `gorm:"type:varchar(50);not null;index:,type:btree"`
+	ID          string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	CompanyID   string    `gorm:"index;type:varchar(50);not null"`
 	TokenHash   string    `gorm:"uniqueIndex;type:varchar(255);not null"`
 	RoomID      string    `gorm:"index;type:varchar(255);not null"`
 	UserName    string    `gorm:"type:varchar(255);not null"`
@@ -43,7 +41,7 @@ type Token struct {
 	Revoked     bool      `gorm:"default:false"`
 
 	// Foreign Key
-	Company *Company `gorm:"foreignKey:CompanyIDFK;references:ID;constraint:OnDelete:CASCADE"`
+	Company *Company `gorm:"foreignKey:CompanyID;references:ID;constraint:OnDelete:CASCADE"`
 }
 
 // Room represents a video room
@@ -57,12 +55,6 @@ type Room struct {
 	CreatedAt       time.Time `gorm:"autoCreateTime"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime"`
 	Metadata        datatypes.JSON `gorm:"type:jsonb;default:'{}';serializer:json"`
-
-	// Unique constraint
-	// UniqueIndex not shown here - use migration
-
-	// Foreign Key
-	Company *Company `gorm:"foreignKey:CompanyID;references:CompanyID;constraint:OnDelete:CASCADE"`
 }
 
 // Session represents an active user session
@@ -77,10 +69,6 @@ type Session struct {
 	DurationSeconds int `gorm:"generated:stored"`
 	PeerAddress     string `gorm:"type:varchar(100)"`
 	Metadata        datatypes.JSON `gorm:"type:jsonb;default:'{}';serializer:json"`
-
-	// Foreign Keys
-	Company *Company `gorm:"foreignKey:CompanyID;references:CompanyID;constraint:OnDelete:CASCADE"`
-	Token   *Token   `gorm:"foreignKey:TokenID;references:ID;constraint:OnDelete:SET NULL"`
 }
 
 // APIKey represents an API key for rate limiting
@@ -93,9 +81,6 @@ type APIKey struct {
 	RateLimitPerMinute int       `gorm:"default:60"`
 	CreatedAt          time.Time `gorm:"autoCreateTime"`
 	UpdatedAt          time.Time `gorm:"autoUpdateTime"`
-
-	// Foreign Key
-	Company *Company `gorm:"foreignKey:CompanyID;references:CompanyID;constraint:OnDelete:CASCADE"`
 }
 
 // AuditLog represents audit log entries

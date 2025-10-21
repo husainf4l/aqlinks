@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -112,7 +113,7 @@ func (a *App) Run() error {
 
 	// Create HTTP server
 	server := &http.Server{
-		Addr:    a.cfg.Addr,
+		Addr:    fmt.Sprintf(":%d", a.cfg.Port),
 		Handler: nil, // uses DefaultServeMux
 	}
 
@@ -121,7 +122,7 @@ func (a *App) Run() error {
 
 	// Start server in a goroutine
 	go func() {
-		a.log.Infof("Starting HTTP server on %s", a.cfg.Addr)
+		a.log.Infof("Starting HTTP server on :%d", a.cfg.Port)
 		serverErrors <- server.ListenAndServe()
 	}()
 

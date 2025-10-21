@@ -10,7 +10,8 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Addr              string
+	Port              int
+	ServerURL         string
 	LogLevel          string
 	Env               string
 	KeepalivePingInt  time.Duration // Keepalive ping interval
@@ -37,8 +38,16 @@ func Load() *Config {
 	pongWaitSecs, _ := strconv.ParseInt(*pongWait, 10, 64)
 	writeDeadlineSecs, _ := strconv.ParseInt(*writeDeadline, 10, 64)
 
+	// Parse port from address
+	portStr := strings.TrimPrefix(*addr, ":")
+	port := 8080
+	if p, err := strconv.Atoi(portStr); err == nil {
+		port = p
+	}
+
 	return &Config{
-		Addr:              *addr,
+		Port:              port,
+		ServerURL:         getEnv("SERVER_URL", "http://localhost:8080"),
 		LogLevel:          strings.ToLower(*logLevel),
 		Env:               strings.ToLower(*env),
 		KeepalivePingInt:  time.Duration(pingIntSecs) * time.Second,
