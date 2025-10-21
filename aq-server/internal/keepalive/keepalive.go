@@ -19,7 +19,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		PingInterval:  30 * time.Second,
-		PongWaitTime:  10 * time.Second,
+		PongWaitTime:  60 * time.Second, // Increased: give client 60s to respond to ping
 		WriteDeadline: 5 * time.Second,
 	}
 }
@@ -46,8 +46,8 @@ func NewMonitor(conn *websocket.Conn, logger logging.LeveledLogger, cfg Config) 
 	m.lastPongTime.Store(time.Now())
 	m.alive.Store(true)
 
-	// Set initial pong handler
-	m.conn.SetReadDeadline(time.Now().Add(cfg.PongWaitTime))
+	// Set pong handler but don't set read deadline - it breaks idle connections
+	// The browser WebSocket API doesn't respond to server pings anyway
 	m.conn.SetPongHandler(func(appData string) error {
 		m.handlePong()
 		return nil
@@ -105,8 +105,8 @@ func (m *Monitor) monitorLoop() {
 			lastPong := m.lastPongTime.Load().(time.Time)
 			timeSinceLastPong := time.Since(lastPong)
 
-			// If no pong received within timeout, mark as dead
-			if timeSinceLastPong > m.config.PongWaitTime*2 {
+			// Only mark as stale if really no activity for a long time (3x the pong wait)
+			if timeSinceLastPong > m.config.PongWaitTime*3 {
 				m.logger.Warnf("No pong received for %v, marking connection as stale", timeSinceLastPong)
 				m.alive.Store(false)
 				return
@@ -129,7 +129,6 @@ func (m *Monitor) sendPing() error {
 // handlePong handles pong responses
 func (m *Monitor) handlePong() {
 	m.lastPongTime.Store(time.Now())
-	m.conn.SetReadDeadline(time.Now().Add(m.config.PongWaitTime))
 	m.logger.Debugf("Received pong")
 }
 

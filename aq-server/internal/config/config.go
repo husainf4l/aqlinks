@@ -43,7 +43,7 @@ func Load() *Config {
 		Env:               strings.ToLower(*env),
 		KeepalivePingInt:  time.Duration(pingIntSecs) * time.Second,
 		KeepalivePongWait: time.Duration(pongWaitSecs) * time.Second,
-		WriteDeadline:     time.Duration(writeDeadlineSecs) * time.Second,
+		WriteDeadline:     time.Duration(writeDeadlineSecs) * time.Second * 2, // Doubled to prevent premature timeout
 	}
 }
 

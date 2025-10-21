@@ -184,6 +184,14 @@ func SignalPeerConnections() { // nolint
 				}
 			}
 
+			// Only create offer if signaling state is stable
+			// (can't create offer if we're waiting for answer to previous offer)
+			if currentPeer.PeerConnection.SignalingState() != webrtc.SignalingStateStable {
+				// Skip this peer, it's in the middle of an offer/answer exchange
+				i++
+				continue
+			}
+
 			// Create and send offer
 			offer, err := currentPeer.PeerConnection.CreateOffer(nil)
 			if err != nil {
