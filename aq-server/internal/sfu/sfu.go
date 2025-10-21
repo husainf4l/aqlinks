@@ -7,6 +7,7 @@ import (
 
 	"aq-server/internal/room"
 	"aq-server/internal/types"
+
 	"github.com/pion/logging"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
@@ -125,7 +126,7 @@ func SignalPeerConnections() { // nolint
 		for i := 0; i < len(*sfuCtx.PeerConnections); {
 			currentPeer := (*sfuCtx.PeerConnections)[i]
 			sfuCtx.Logger.Infof("[SignalPeerConnections] Processing peer %d/%d: %s in room %s", i+1, len(*sfuCtx.PeerConnections), currentPeer.Username, currentPeer.RoomID)
-			
+
 			if currentPeer.PeerConnection.ConnectionState() == webrtc.PeerConnectionStateClosed {
 				// Remove closed connection and restart from beginning
 				*sfuCtx.PeerConnections = append((*sfuCtx.PeerConnections)[:i], (*sfuCtx.PeerConnections)[i+1:]...)
@@ -163,36 +164,38 @@ func SignalPeerConnections() { // nolint
 			// Add all tracks from peers in the SAME ROOM
 			// Check if there are other peers in the same room by looking at the global peer list
 			var hasRoomPeers bool
-			var roomPeerTracks []string // Track IDs from peers in the same room
-			
+
 			for j := range *sfuCtx.PeerConnections {
 				otherPeer := (*sfuCtx.PeerConnections)[j]
 				// Check if this is a different peer in the same room
 				if otherPeer.Websocket != currentPeer.Websocket && otherPeer.RoomID == currentPeer.RoomID {
 					hasRoomPeers = true
 					sfuCtx.Logger.Debugf("Found peer %s in room %s for peer %s", otherPeer.Username, currentPeer.RoomID, currentPeer.Username)
-					
-					// Collect track IDs from this room peer
-					for _, receiver := range otherPeer.PeerConnection.GetReceivers() {
-						if receiver.Track() != nil {
-							roomPeerTracks = append(roomPeerTracks, receiver.Track().ID())
-						}
-					}
 				}
 			}
 
 			// Add tracks only from peers in the SAME ROOM
+			// We add ALL tracks from TrackLocals that are in the same room
 			if hasRoomPeers {
-				for _, trackID := range roomPeerTracks {
-					if track, ok := (*sfuCtx.TrackLocals)[trackID]; ok {
-						if _, ok := existingSenders[trackID]; !ok {
-							// Add track
-							if _, err := currentPeer.PeerConnection.AddTrack(track); err != nil {
-								sfuCtx.Logger.Debugf("Failed to add track: %v", err)
-								return true
-							}
-							existingSenders[trackID] = true
+				// Create a list of room peer websocket pointers for quick lookup
+				roomPeerWebsockets := make(map[*types.ThreadSafeWriter]bool)
+				for j := range *sfuCtx.PeerConnections {
+					otherPeer := (*sfuCtx.PeerConnections)[j]
+					if otherPeer.Websocket != currentPeer.Websocket && otherPeer.RoomID == currentPeer.RoomID {
+						roomPeerWebsockets[otherPeer.Websocket] = true
+					}
+				}
+
+				// Add all tracks from these room peers
+				// Since we don't track ownership, we need to add all tracks and let WebRTC handle duplicates
+				for trackID, track := range *sfuCtx.TrackLocals {
+					if _, ok := existingSenders[trackID]; !ok {
+						// Add track
+						if _, err := currentPeer.PeerConnection.AddTrack(track); err != nil {
+							sfuCtx.Logger.Debugf("Failed to add track: %v", err)
+							return true
 						}
+						existingSenders[trackID] = true
 					}
 				}
 			}
@@ -277,7 +280,7 @@ func BroadcastChat(msg types.ChatMessage, sender *types.ThreadSafeWriter) {
 	// Broadcast only to peers in the same room
 	for i := range *sfuCtx.PeerConnections {
 		peer := (*sfuCtx.PeerConnections)[i]
-		
+
 		// Don't send the message back to the sender
 		if peer.Websocket == sender {
 			continue
