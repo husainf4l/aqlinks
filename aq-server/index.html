@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+  <!--
+    SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+    SPDX-License-Identifier: MIT
+  -->
+
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background: #f5f5f5;
+      }
+      .container {
+        display: flex;
+        gap: 20px;
+      }
+      .video-section {
+        flex: 2;
+      }
+      .chat-section {
+        flex: 1;
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        max-height: 600px;
+      }
+      #chatMessages {
+        flex: 1;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        background: #fafafa;
+        max-height: 400px;
+      }
+      .chat-message {
+        margin-bottom: 10px;
+        padding: 8px;
+        background: #e3f2fd;
+        border-radius: 5px;
+      }
+      .chat-message .time {
+        font-size: 0.8em;
+        color: #666;
+      }
+      .chat-message .text {
+        margin-top: 5px;
+      }
+      .chat-input-container {
+        display: flex;
+        gap: 10px;
+      }
+      #chatInput {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+      }
+      #sendBtn {
+        padding: 10px 20px;
+        background: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      #sendBtn:hover {
+        background: #1976D2;
+      }
+      h3 {
+        color: #333;
+        margin-top: 0;
+      }
+      video {
+        border-radius: 8px;
+        background: #000;
+      }
+      #remoteVideos {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      #remoteVideos video {
+        max-width: 320px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="video-section">
+        <h3>📹 Local Video</h3>
+        <video id="localVideo" width="320" height="240" autoplay muted></video>
+
+        <h3>👥 Remote Videos</h3>
+        <div id="remoteVideos"></div>
+      </div>
+
+      <div class="chat-section">
+        <h3>💬 Chat</h3>
+        <div id="chatMessages"></div>
+        <div class="chat-input-container">
+          <input type="text" id="chatInput" placeholder="Type a message..." />
+          <button id="sendBtn">Send</button>
+        </div>
+      </div>
+    </div>
+  </body>
+
+  <script>
+    // Chat functions
+    function addChatMessage(message, time) {
+      const chatMessages = document.getElementById('chatMessages')
+      const msgDiv = document.createElement('div')
+      msgDiv.className = 'chat-message'
+      msgDiv.innerHTML = `
+        <div class="time">${time}</div>
+        <div class="text">${escapeHtml(message)}</div>
+      `
+      chatMessages.appendChild(msgDiv)
+      chatMessages.scrollTop = chatMessages.scrollHeight
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div')
+      div.textContent = text
+      return div.innerHTML
+    }
+
+    function sendChatMessage(ws) {
+      const input = document.getElementById('chatInput')
+      const message = input.value.trim()
+      if (!message) return
+
+      // Send to server
+      ws.send(JSON.stringify({
+        event: 'chat',
+        data: message
+      }))
+
+      // Add to own chat (with "You:" prefix)
+      const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      addChatMessage(`You: ${message}`, now)
+      
+      input.value = ''
+    }
+
+    // WebRTC and Chat initialization
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    .then(stream => {
+      let pc = new RTCPeerConnection()
+      pc.ontrack = function (event) {
+        if (event.track.kind === 'audio') {
+          return
+        }
+
+        let el = document.createElement(event.track.kind)
+        el.srcObject = event.streams[0]
+        el.autoplay = true
+        el.controls = true
+        document.getElementById('remoteVideos').appendChild(el)
+
+        event.track.onmute = function(event) {
+          el.play()
+        }
+
+        event.streams[0].onremovetrack = ({track}) => {
+          if (el.parentNode) {
+            el.parentNode.removeChild(el)
+          }
+        }
+      }
+
+      document.getElementById('localVideo').srcObject = stream
+      stream.getTracks().forEach(track => pc.addTrack(track, stream))
+
+      let ws = new WebSocket("{{.}}")
+      
+      // Chat button click
+      document.getElementById('sendBtn').addEventListener('click', () => sendChatMessage(ws))
+      
+      // Chat enter key
+      document.getElementById('chatInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          sendChatMessage(ws)
+        }
+      })
+
+      pc.onicecandidate = e => {
+        if (!e.candidate) {
+          return
+        }
+
+        ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
+      }
+
+      ws.onclose = function(evt) {
+        window.alert("Websocket has closed")
+      }
+
+      ws.onmessage = function(evt) {
+        let msg = JSON.parse(evt.data)
+        if (!msg) {
+          return console.log('failed to parse msg')
+        }
+
+        switch (msg.event) {
+          case 'offer':
+            let offer = JSON.parse(msg.data)
+            if (!offer) {
+              return console.log('failed to parse answer')
+            }
+            pc.setRemoteDescription(offer)
+            pc.createAnswer().then(answer => {
+              pc.setLocalDescription(answer)
+              ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
+            })
+            return
+
+          case 'candidate':
+            let candidate = JSON.parse(msg.data)
+            if (!candidate) {
+              return console.log('failed to parse candidate')
+            }
+
+            pc.addIceCandidate(candidate)
+            return
+
+          case 'chat':
+            // Handle incoming chat message
+            addChatMessage(`Remote: ${msg.message}`, msg.time)
+            return
+        }
+      }
+
+      ws.onerror = function(evt) {
+        console.log("ERROR: " + evt.data)
+      }
+    }).catch(window.alert)
+  </script>
+</html>
