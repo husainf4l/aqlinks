@@ -172,7 +172,6 @@ func SignalPeerConnections() { // nolint
 				return true
 			}
 
-			sfuCtx.Logger.Infof("Send offer to client: %v", offer)
 
 			if err = (*sfuCtx.PeerConnections)[i].Websocket.WriteJSON(&types.WebsocketMessage{
 				Event: "offer",

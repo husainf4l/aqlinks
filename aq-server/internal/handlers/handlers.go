@@ -177,7 +177,6 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 			return
 		}
 
-		handlerCtx.Logger.Infof("Got message: %s", raw)
 
 		if err := json.Unmarshal(raw, &message); err != nil {
 			handlerCtx.Logger.Errorf("Failed to unmarshal json to message: %v", err)
@@ -194,7 +193,6 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 				return
 			}
 
-			handlerCtx.Logger.Infof("Got candidate: %v", candidate)
 
 			if err := peerConnection.AddICECandidate(candidate); err != nil {
 				handlerCtx.Logger.Errorf("Failed to add ICE candidate: %v", err)
@@ -209,7 +207,6 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 				return
 			}
 
-			handlerCtx.Logger.Infof("Got answer: %v", answer)
 
 			if err := peerConnection.SetRemoteDescription(answer); err != nil {
 				handlerCtx.Logger.Errorf("Failed to set remote description: %v", err)
