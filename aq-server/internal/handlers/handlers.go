@@ -11,6 +11,7 @@ import (
 	"aq-server/internal/keepalive"
 	"aq-server/internal/room"
 	"aq-server/internal/types"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
@@ -35,7 +36,7 @@ type HandlerContext struct {
 	RemoveTrack           func(*webrtc.TrackLocalStaticRTP)
 	SignalPeerConnections func()
 	BroadcastChat         func(types.ChatMessage, *types.ThreadSafeWriter)
-	KeepaliveConfig       keepalive.Config // Keepalive configuration
+	KeepaliveConfig       keepalive.Config  // Keepalive configuration
 	RoomManager           *room.RoomManager // New: room management
 }
 
@@ -218,7 +219,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		RoomID:         roomID,
 		UserType:       userType,
 	}
-	
+
 	handlerCtx.ListLock.Lock()
 	*handlerCtx.PeerConnections = append(*handlerCtx.PeerConnections, peerConnectionState)
 	handlerCtx.ListLock.Unlock()

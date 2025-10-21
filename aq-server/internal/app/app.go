@@ -20,6 +20,7 @@ import (
 	"aq-server/internal/room"
 	"aq-server/internal/sfu"
 	"aq-server/internal/types"
+
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v4"
@@ -43,15 +44,15 @@ type App struct {
 // New creates and initializes a new App
 func New() (*App, error) {
 	cfg := config.Load()
-	
+
 	// Create logger first for database initialization
 	log := createLogger(cfg)
-	
+
 	// Initialize database connection
 	if err := database.Init(log); err != nil {
 		return nil, err
 	}
-	
+
 	// Create HTTP server and mux
 	mux := http.NewServeMux()
 	httpServer := &http.Server{
@@ -61,7 +62,7 @@ func New() (*App, error) {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	
+
 	app := &App{
 		cfg:        cfg,
 		httpServer: httpServer,
@@ -88,7 +89,7 @@ func New() (*App, error) {
 		PongWaitTime:  app.cfg.KeepalivePongWait,
 		WriteDeadline: app.cfg.WriteDeadline,
 	}
-	
+
 	handlers.InitContext(&handlers.HandlerContext{
 		Upgrader:              app.upgrader,
 		Logger:                app.log,
@@ -117,13 +118,13 @@ func New() (*App, error) {
 func (a *App) Run() error {
 	// Create a negroni middleware stack
 	n := negroni.New()
-	
+
 	// Add logging middleware
 	n.Use(negroni.NewLogger())
-	
+
 	// Add recovery middleware
 	n.Use(negroni.NewRecovery())
-	
+
 	// Setup REST API routes with net/http
 	if err := api.SetupRoutes(a.serveMux); err != nil {
 		a.log.Errorf("Failed to setup API routes: %v", err)
@@ -140,7 +141,7 @@ func (a *App) Run() error {
 
 	// Use the ServeMux as the final handler in negroni
 	n.UseHandler(a.serveMux)
-	
+
 	// Update server handler to use negroni
 	a.httpServer.Handler = n
 
@@ -197,14 +198,14 @@ func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	// Determine the WebSocket URL based on the request scheme
 	scheme := "ws://"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "wss://"
 	}
 	wsURL := scheme + r.Host + "/aq_server/ws"
-	
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.indexTemplate.Execute(w, wsURL); err != nil {
 		a.log.Errorf("Error executing index template: %v", err)
@@ -223,7 +224,7 @@ func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	health := map[string]interface{}{
 		"status":    "healthy",
@@ -231,7 +232,7 @@ func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"peers":     len(a.peerConnections),
 	}
-	
+
 	if err := json.NewEncoder(w).Encode(health); err != nil {
 		a.log.Errorf("Error encoding health response: %v", err)
 	}
@@ -243,7 +244,7 @@ func (a *App) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	metrics := map[string]interface{}{
 		"active_connections":        len(a.peerConnections),
@@ -252,7 +253,7 @@ func (a *App) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		"rooms_active":              0,
 		"timestamp":                 time.Now().UTC().Format(time.RFC3339),
 	}
-	
+
 	if err := json.NewEncoder(w).Encode(metrics); err != nil {
 		a.log.Errorf("Error encoding metrics response: %v", err)
 	}
@@ -279,7 +280,7 @@ func (a *App) shutdown() {
 // createLogger creates a logger with the appropriate level from config
 func createLogger(cfg *config.Config) logging.LeveledLogger {
 	loggerFactory := logging.NewDefaultLoggerFactory()
-	
+
 	// Set log level based on config
 	switch cfg.LogLevel {
 	case "debug":
@@ -293,6 +294,6 @@ func createLogger(cfg *config.Config) logging.LeveledLogger {
 	default:
 		loggerFactory.DefaultLogLevel = logging.LogLevelInfo
 	}
-	
+
 	return loggerFactory.NewLogger("sfu-ws")
 }
