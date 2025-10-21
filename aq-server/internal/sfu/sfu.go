@@ -77,7 +77,8 @@ func AddTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
 	// Create a new TrackLocal with the same codec as our incoming
 	trackLocal, err := webrtc.NewTrackLocalStaticRTP(t.Codec().RTPCodecCapability, t.ID(), t.StreamID())
 	if err != nil {
-		panic(err)
+		sfuCtx.Logger.Errorf("Failed to create TrackLocal: %v", err)
+		return nil // Return nil instead of panicking
 	}
 
 	(*sfuCtx.TrackLocals)[t.ID()] = trackLocal
@@ -113,14 +114,15 @@ func SignalPeerConnections() { // nolint
 	}()
 
 	attemptSync := func() (tryAgain bool) {
-		for i := range *sfuCtx.PeerConnections {
+		// Use index-based loop with bounds checking to safely remove elements
+		for i := 0; i < len(*sfuCtx.PeerConnections); {
 			if (*sfuCtx.PeerConnections)[i].PeerConnection.ConnectionState() == webrtc.PeerConnectionStateClosed {
+				// Remove closed connection and restart from beginning
 				*sfuCtx.PeerConnections = append((*sfuCtx.PeerConnections)[:i], (*sfuCtx.PeerConnections)[i+1:]...)
-
 				return true // We modified the slice, start from the beginning
 			}
 
-			// map of sender we already are seanding, so we don't double send
+			// map of sender we already are sending, so we don't double send
 			existingSenders := map[string]bool{}
 
 			for _, sender := range (*sfuCtx.PeerConnections)[i].PeerConnection.GetSenders() {
@@ -130,9 +132,10 @@ func SignalPeerConnections() { // nolint
 
 				existingSenders[sender.Track().ID()] = true
 
-				// If we have a RTPSender that doesn't map to a existing track remove and signal
+				// If we have a RTPSender that doesn't map to an existing track, remove it
 				if _, ok := (*sfuCtx.TrackLocals)[sender.Track().ID()]; !ok {
 					if err := (*sfuCtx.PeerConnections)[i].PeerConnection.RemoveTrack(sender); err != nil {
+						sfuCtx.Logger.Errorf("Failed to remove track: %v", err)
 						return true
 					}
 				}
@@ -147,38 +150,43 @@ func SignalPeerConnections() { // nolint
 				existingSenders[receiver.Track().ID()] = true
 			}
 
-			// Add all track we aren't sending yet to the PeerConnection
+			// Add all tracks we aren't sending yet to the PeerConnection
 			for trackID := range *sfuCtx.TrackLocals {
 				if _, ok := existingSenders[trackID]; !ok {
 					if _, err := (*sfuCtx.PeerConnections)[i].PeerConnection.AddTrack((*sfuCtx.TrackLocals)[trackID]); err != nil {
+						sfuCtx.Logger.Errorf("Failed to add track: %v", err)
 						return true
 					}
 				}
 			}
 
+			// Create and send offer
 			offer, err := (*sfuCtx.PeerConnections)[i].PeerConnection.CreateOffer(nil)
 			if err != nil {
+				sfuCtx.Logger.Errorf("Failed to create offer: %v", err)
 				return true
 			}
 
 			if err = (*sfuCtx.PeerConnections)[i].PeerConnection.SetLocalDescription(offer); err != nil {
+				sfuCtx.Logger.Errorf("Failed to set local description: %v", err)
 				return true
 			}
 
 			offerString, err := json.Marshal(offer)
 			if err != nil {
 				sfuCtx.Logger.Errorf("Failed to marshal offer to json: %v", err)
-
 				return true
 			}
-
 
 			if err = (*sfuCtx.PeerConnections)[i].Websocket.WriteJSON(&types.WebsocketMessage{
 				Event: "offer",
 				Data:  string(offerString),
 			}); err != nil {
+				sfuCtx.Logger.Errorf("Failed to write offer: %v", err)
 				return true
 			}
+
+			i++ // Only increment if we didn't remove the element
 		}
 
 		return tryAgain
