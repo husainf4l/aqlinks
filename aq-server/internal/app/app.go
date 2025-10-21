@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"aq-server/internal/config"
+	"aq-server/internal/database"
 	"aq-server/internal/handlers"
 	"aq-server/internal/keepalive"
 	"aq-server/internal/room"
@@ -38,6 +39,14 @@ type App struct {
 func New() (*App, error) {
 	cfg := config.Load()
 	
+	// Create logger first for database initialization
+	log := createLogger(cfg)
+	
+	// Initialize database connection
+	if err := database.Init(log); err != nil {
+		return nil, err
+	}
+	
 	app := &App{
 		cfg: cfg,
 		upgrader: websocket.Upgrader{
@@ -45,7 +54,7 @@ func New() (*App, error) {
 		},
 		indexTemplate: &template.Template{},
 		trackLocals:   make(map[string]*webrtc.TrackLocalStaticRTP),
-		log:           createLogger(cfg),
+		log:           log,
 		roomManager:   room.NewRoomManager(),
 	}
 
@@ -142,6 +151,12 @@ func (a *App) Run() error {
 	if err := server.Shutdown(ctx); err != nil {
 		a.log.Errorf("Server shutdown error: %v", err)
 		return err
+	}
+
+	// Close database connection
+	a.log.Infof("Closing database connection...")
+	if err := database.Close(); err != nil {
+		a.log.Errorf("Database close error: %v", err)
 	}
 
 	a.log.Infof("Server shutdown complete")
