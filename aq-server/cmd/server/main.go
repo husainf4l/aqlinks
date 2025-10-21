@@ -16,11 +16,11 @@ import (
 	"text/template"
 	"time"
 
+	"aq-server/internal/handlers"
 	"aq-server/internal/types"
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -53,6 +53,16 @@ func main() {
 	// Init other state
 	trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
 
+	// Initialize handlers package with context
+	handlers.InitContext(&handlers.HandlerContext{
+		PeerConnections:       &peerConnections,
+		TrackLocals:           &trackLocals,
+		AddTrack:              addTrack,
+		RemoveTrack:           removeTrack,
+		SignalPeerConnections: signalPeerConnections,
+		BroadcastChat:         broadcastChat,
+	})
+
 	// Read index.html from disk into memory, serve whenever anyone requests /
 	indexHTML, err := os.ReadFile("index.html")
 	if err != nil {
@@ -61,7 +71,7 @@ func main() {
 	indexTemplate = template.Must(template.New("").Parse(string(indexHTML)))
 
 	// websocket handler
-	http.HandleFunc("/aq_server/websocket", websocketHandler)
+	http.HandleFunc("/aq_server/websocket", handlers.WebsocketHandler)
 
 	// index.html handler
 	http.HandleFunc("/aq_server/", func(w http.ResponseWriter, r *http.Request) {
@@ -255,194 +265,4 @@ func broadcastChat(msg chatMessage, sender *threadSafeWriter) {
 	}
 }
 
-// Handle incoming websockets.
-func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
-	// Upgrade HTTP request to Websocket
-	unsafeConn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Errorf("Failed to upgrade HTTP to Websocket: ", err)
 
-		return
-	}
-
-	c := &threadSafeWriter{unsafeConn, sync.Mutex{}} // nolint
-
-	// When this frame returns close the Websocket
-	defer c.Close() //nolint
-
-	// Create new PeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		log.Errorf("Failed to creates a PeerConnection: %v", err)
-
-		return
-	}
-
-	// When this frame returns close the PeerConnection
-	defer peerConnection.Close() //nolint
-
-	// Accept one audio and one video track incoming
-	for _, typ := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
-		if _, err := peerConnection.AddTransceiverFromKind(typ, webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionRecvonly,
-		}); err != nil {
-			log.Errorf("Failed to add transceiver: %v", err)
-
-			return
-		}
-	}
-
-	// Add our new PeerConnection to global list
-	listLock.Lock()
-	peerConnections = append(peerConnections, peerConnectionState{PeerConnection: peerConnection, Websocket: c})
-	listLock.Unlock()
-
-	// Trickle ICE. Emit server candidate to client
-	peerConnection.OnICECandidate(func(i *webrtc.ICECandidate) {
-		if i == nil {
-			return
-		}
-		// If you are serializing a candidate make sure to use ToJSON
-		// Using Marshal will result in errors around `sdpMid`
-		candidateString, err := json.Marshal(i.ToJSON())
-		if err != nil {
-			log.Errorf("Failed to marshal candidate to json: %v", err)
-
-			return
-		}
-
-		log.Infof("Send candidate to client: %s", candidateString)
-
-		if writeErr := c.WriteJSON(&websocketMessage{
-			Event: "candidate",
-			Data:  string(candidateString),
-		}); writeErr != nil {
-			log.Errorf("Failed to write JSON: %v", writeErr)
-		}
-	})
-
-	// If PeerConnection is closed remove it from global list
-	peerConnection.OnConnectionStateChange(func(p webrtc.PeerConnectionState) {
-		log.Infof("Connection state change: %s", p)
-
-		switch p {
-		case webrtc.PeerConnectionStateFailed:
-			if err := peerConnection.Close(); err != nil {
-				log.Errorf("Failed to close PeerConnection: %v", err)
-			}
-		case webrtc.PeerConnectionStateClosed:
-			signalPeerConnections()
-		default:
-		}
-	})
-
-	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		log.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
-
-		// Create a track to fan out our incoming video to all peers
-		trackLocal := addTrack(t)
-		defer removeTrack(trackLocal)
-
-		buf := make([]byte, 1500)
-		rtpPkt := &rtp.Packet{}
-
-		for {
-			i, _, err := t.Read(buf)
-			if err != nil {
-				return
-			}
-
-			if err = rtpPkt.Unmarshal(buf[:i]); err != nil {
-				log.Errorf("Failed to unmarshal incoming RTP packet: %v", err)
-
-				return
-			}
-
-			rtpPkt.Extension = false
-			rtpPkt.Extensions = nil
-
-			if err = trackLocal.WriteRTP(rtpPkt); err != nil {
-				return
-			}
-		}
-	})
-
-	peerConnection.OnICEConnectionStateChange(func(is webrtc.ICEConnectionState) {
-		log.Infof("ICE connection state changed: %s", is)
-	})
-
-	// Signal for the new PeerConnection
-	signalPeerConnections()
-
-	message := &websocketMessage{}
-	for {
-		_, raw, err := c.ReadMessage()
-		if err != nil {
-			// Check if it's a normal close (user left)
-			if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Infof("Client disconnected normally")
-			} else {
-				log.Errorf("Failed to read message: %v", err)
-			}
-
-			return
-		}
-
-		log.Infof("Got message: %s", raw)
-
-		if err := json.Unmarshal(raw, &message); err != nil {
-			log.Errorf("Failed to unmarshal json to message: %v", err)
-
-			return
-		}
-
-		switch message.Event {
-		case "candidate":
-			candidate := webrtc.ICECandidateInit{}
-			if err := json.Unmarshal([]byte(message.Data), &candidate); err != nil {
-				log.Errorf("Failed to unmarshal json to candidate: %v", err)
-
-				return
-			}
-
-			log.Infof("Got candidate: %v", candidate)
-
-			if err := peerConnection.AddICECandidate(candidate); err != nil {
-				log.Errorf("Failed to add ICE candidate: %v", err)
-
-				return
-			}
-		case "answer":
-			answer := webrtc.SessionDescription{}
-			if err := json.Unmarshal([]byte(message.Data), &answer); err != nil {
-				log.Errorf("Failed to unmarshal json to answer: %v", err)
-
-				return
-			}
-
-			log.Infof("Got answer: %v", answer)
-
-			if err := peerConnection.SetRemoteDescription(answer); err != nil {
-				log.Errorf("Failed to set remote description: %v", err)
-
-				return
-			}
-		case "chat":
-			// Handle chat message
-			chatMsg := chatMessage{
-				Event:   "chat",
-				Message: message.Data,
-				Time:    time.Now().Format("15:04:05"),
-			}
-			
-			log.Infof("Broadcasting chat message: %s", message.Data)
-			
-			// Broadcast to all other peers
-			broadcastChat(chatMsg, c)
-		default:
-			log.Errorf("unknown message: %+v", message)
-		}
-	}
-}
-
-// Handle incoming websockets.
