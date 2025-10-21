@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aq-server/internal/keepalive"
+	"aq-server/internal/room"
 	"aq-server/internal/types"
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
@@ -33,6 +34,7 @@ type HandlerContext struct {
 	SignalPeerConnections func()
 	BroadcastChat         func(types.ChatMessage, *types.ThreadSafeWriter)
 	KeepaliveConfig       keepalive.Config // Keepalive configuration
+	RoomManager           *room.RoomManager // New: room management
 }
 
 var handlerCtx *HandlerContext
@@ -91,6 +93,19 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		return
 	}
 
+	// Extract room and username from query parameters
+	roomID := r.URL.Query().Get("room")
+	if roomID == "" {
+		roomID = "default" // Default room if not specified
+	}
+	
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		username = "anonymous" // Default username if not specified
+	}
+
+	handlerCtx.Logger.Debugf("Client connecting to room=%s with username=%s", roomID, username)
+
 	// Upgrade HTTP request to Websocket
 	unsafeConn, err := handlerCtx.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -121,6 +136,10 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 			handlerCtx.Logger.Errorf("Failed to close PeerConnection: %v", err)
 		}
 		removePeerConnection(c)
+		// Remove from room manager
+		if handlerCtx.RoomManager != nil {
+			handlerCtx.RoomManager.RemovePeer(roomID, c)
+		}
 		handlerCtx.SignalPeerConnections()
 	}() //nolint
 
@@ -135,9 +154,22 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	}
 
 	// Add our new PeerConnection to global list
+	peerConnectionState := types.PeerConnectionState{
+		PeerConnection: peerConnection,
+		Websocket:      c,
+		Username:       username,
+		RoomID:         roomID,
+	}
+	
 	handlerCtx.ListLock.Lock()
-	*handlerCtx.PeerConnections = append(*handlerCtx.PeerConnections, types.PeerConnectionState{PeerConnection: peerConnection, Websocket: c})
+	*handlerCtx.PeerConnections = append(*handlerCtx.PeerConnections, peerConnectionState)
 	handlerCtx.ListLock.Unlock()
+
+	// Add to room manager
+	if handlerCtx.RoomManager != nil {
+		handlerCtx.RoomManager.AddPeer(roomID, c, &peerConnectionState)
+		handlerCtx.Logger.Infof("Peer %s added to room %s (total: %d)", username, roomID, handlerCtx.RoomManager.GetRoomPeerCount(roomID))
+	}
 
 	// Trickle ICE. Emit server candidate to client
 	peerConnection.OnICECandidate(func(i *webrtc.ICECandidate) {

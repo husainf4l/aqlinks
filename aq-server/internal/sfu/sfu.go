@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"aq-server/internal/room"
 	"aq-server/internal/types"
 	"github.com/pion/logging"
 	"github.com/pion/rtcp"
@@ -17,6 +18,7 @@ type SFUContext struct {
 	ListLock        sync.RWMutex
 	PeerConnections *[]types.PeerConnectionState
 	TrackLocals     *map[string]*webrtc.TrackLocalStaticRTP
+	RoomManager     *room.RoomManager // New: room management
 }
 
 var sfuCtx *SFUContext
@@ -116,7 +118,9 @@ func SignalPeerConnections() { // nolint
 	attemptSync := func() (tryAgain bool) {
 		// Use index-based loop with bounds checking to safely remove elements
 		for i := 0; i < len(*sfuCtx.PeerConnections); {
-			if (*sfuCtx.PeerConnections)[i].PeerConnection.ConnectionState() == webrtc.PeerConnectionStateClosed {
+			currentPeer := (*sfuCtx.PeerConnections)[i]
+			
+			if currentPeer.PeerConnection.ConnectionState() == webrtc.PeerConnectionStateClosed {
 				// Remove closed connection and restart from beginning
 				*sfuCtx.PeerConnections = append((*sfuCtx.PeerConnections)[:i], (*sfuCtx.PeerConnections)[i+1:]...)
 				return true // We modified the slice, start from the beginning
@@ -125,7 +129,7 @@ func SignalPeerConnections() { // nolint
 			// map of sender we already are sending, so we don't double send
 			existingSenders := map[string]bool{}
 
-			for _, sender := range (*sfuCtx.PeerConnections)[i].PeerConnection.GetSenders() {
+			for _, sender := range currentPeer.PeerConnection.GetSenders() {
 				if sender.Track() == nil {
 					continue
 				}
@@ -134,7 +138,7 @@ func SignalPeerConnections() { // nolint
 
 				// If we have a RTPSender that doesn't map to an existing track, remove it
 				if _, ok := (*sfuCtx.TrackLocals)[sender.Track().ID()]; !ok {
-					if err := (*sfuCtx.PeerConnections)[i].PeerConnection.RemoveTrack(sender); err != nil {
+					if err := currentPeer.PeerConnection.RemoveTrack(sender); err != nil {
 						sfuCtx.Logger.Errorf("Failed to remove track: %v", err)
 						return true
 					}
@@ -142,7 +146,7 @@ func SignalPeerConnections() { // nolint
 			}
 
 			// Don't receive videos we are sending, make sure we don't have loopback
-			for _, receiver := range (*sfuCtx.PeerConnections)[i].PeerConnection.GetReceivers() {
+			for _, receiver := range currentPeer.PeerConnection.GetReceivers() {
 				if receiver.Track() == nil {
 					continue
 				}
@@ -150,24 +154,44 @@ func SignalPeerConnections() { // nolint
 				existingSenders[receiver.Track().ID()] = true
 			}
 
-			// Add all tracks we aren't sending yet to the PeerConnection
-			for trackID := range *sfuCtx.TrackLocals {
-				if _, ok := existingSenders[trackID]; !ok {
-					if _, err := (*sfuCtx.PeerConnections)[i].PeerConnection.AddTrack((*sfuCtx.TrackLocals)[trackID]); err != nil {
-						sfuCtx.Logger.Errorf("Failed to add track: %v", err)
-						return true
+			// Add all tracks from peers in the SAME ROOM
+			// Only add tracks if there are other peers in the same room
+			var hasRoomPeers bool
+			if sfuCtx.RoomManager != nil {
+				roomPeerCount := sfuCtx.RoomManager.GetRoomPeerCount(currentPeer.RoomID)
+				hasRoomPeers = roomPeerCount > 1 // More than just this peer
+			} else {
+				// Fallback: use all peers if no room manager (backward compatibility)
+				for j := range *sfuCtx.PeerConnections {
+					if (*sfuCtx.PeerConnections)[j].Websocket != currentPeer.Websocket {
+						hasRoomPeers = true
+						break
+					}
+				}
+			}
+
+			// Add tracks if there are other peers in the room
+			if hasRoomPeers {
+				for trackID, track := range *sfuCtx.TrackLocals {
+					if _, ok := existingSenders[trackID]; !ok {
+						// Add track
+						if _, err := currentPeer.PeerConnection.AddTrack(track); err != nil {
+							sfuCtx.Logger.Debugf("Failed to add track: %v", err)
+							return true
+						}
+						existingSenders[trackID] = true
 					}
 				}
 			}
 
 			// Create and send offer
-			offer, err := (*sfuCtx.PeerConnections)[i].PeerConnection.CreateOffer(nil)
+			offer, err := currentPeer.PeerConnection.CreateOffer(nil)
 			if err != nil {
 				sfuCtx.Logger.Errorf("Failed to create offer: %v", err)
 				return true
 			}
 
-			if err = (*sfuCtx.PeerConnections)[i].PeerConnection.SetLocalDescription(offer); err != nil {
+			if err = currentPeer.PeerConnection.SetLocalDescription(offer); err != nil {
 				sfuCtx.Logger.Errorf("Failed to set local description: %v", err)
 				return true
 			}
@@ -178,7 +202,7 @@ func SignalPeerConnections() { // nolint
 				return true
 			}
 
-			if err = (*sfuCtx.PeerConnections)[i].Websocket.WriteJSON(&types.WebsocketMessage{
+			if err = currentPeer.Websocket.WriteJSON(&types.WebsocketMessage{
 				Event: "offer",
 				Data:  string(offerString),
 			}); err != nil {
@@ -209,7 +233,7 @@ func SignalPeerConnections() { // nolint
 	}
 }
 
-// BroadcastChat sends a chat message to all connected peers.
+// BroadcastChat sends a chat message to all connected peers in the same room.
 func BroadcastChat(msg types.ChatMessage, sender *types.ThreadSafeWriter) {
 	if sfuCtx == nil {
 		return
@@ -218,13 +242,30 @@ func BroadcastChat(msg types.ChatMessage, sender *types.ThreadSafeWriter) {
 	sfuCtx.ListLock.RLock()
 	defer sfuCtx.ListLock.RUnlock()
 
+	// Find the sender's room
+	var senderRoom string
 	for i := range *sfuCtx.PeerConnections {
-		// Don't send the message back to the sender
 		if (*sfuCtx.PeerConnections)[i].Websocket == sender {
+			senderRoom = (*sfuCtx.PeerConnections)[i].RoomID
+			break
+		}
+	}
+
+	// Broadcast only to peers in the same room
+	for i := range *sfuCtx.PeerConnections {
+		peer := (*sfuCtx.PeerConnections)[i]
+		
+		// Don't send the message back to the sender
+		if peer.Websocket == sender {
 			continue
 		}
 
-		if err := (*sfuCtx.PeerConnections)[i].Websocket.WriteJSON(msg); err != nil {
+		// Only send to peers in the same room
+		if peer.RoomID != senderRoom {
+			continue
+		}
+
+		if err := peer.Websocket.WriteJSON(msg); err != nil {
 			sfuCtx.Logger.Errorf("Failed to send chat message: %v", err)
 		}
 	}

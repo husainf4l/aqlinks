@@ -13,6 +13,7 @@ import (
 	"aq-server/internal/config"
 	"aq-server/internal/handlers"
 	"aq-server/internal/keepalive"
+	"aq-server/internal/room"
 	"aq-server/internal/routes"
 	"aq-server/internal/sfu"
 	"aq-server/internal/types"
@@ -30,6 +31,7 @@ type App struct {
 	peerConnections []types.PeerConnectionState
 	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
 	log             logging.LeveledLogger
+	roomManager     *room.RoomManager // New: room management
 }
 
 // New creates and initializes a new App
@@ -44,6 +46,7 @@ func New() (*App, error) {
 		indexTemplate: &template.Template{},
 		trackLocals:   make(map[string]*webrtc.TrackLocalStaticRTP),
 		log:           createLogger(cfg),
+		roomManager:   room.NewRoomManager(),
 	}
 
 	// Read index.html from disk into memory
@@ -70,6 +73,7 @@ func New() (*App, error) {
 		SignalPeerConnections: sfu.SignalPeerConnections,
 		BroadcastChat:         sfu.BroadcastChat,
 		KeepaliveConfig:       keepaliveCfg,
+		RoomManager:           app.roomManager,
 	})
 
 	// Initialize SFU package with context
@@ -77,6 +81,7 @@ func New() (*App, error) {
 		Logger:          app.log,
 		PeerConnections: &app.peerConnections,
 		TrackLocals:     &app.trackLocals,
+		RoomManager:     app.roomManager,
 	})
 
 	return app, nil
@@ -90,6 +95,7 @@ func (a *App) Run() error {
 		IndexTemplate:    a.indexTemplate,
 		DispatchKeyFrame: sfu.DispatchKeyFrame,
 		GetPeerCount:     sfu.GetPeerCount,
+		RoomManager:      a.roomManager,
 	}); err != nil {
 		a.log.Errorf("Failed to setup routes: %v", err)
 		return err

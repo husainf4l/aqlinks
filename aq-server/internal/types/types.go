@@ -22,6 +22,8 @@ type ChatMessage struct {
 type PeerConnectionState struct {
 	PeerConnection *webrtc.PeerConnection
 	Websocket      *ThreadSafeWriter
+	Username       string // New: username of the peer
+	RoomID         string // New: room ID this peer belongs to
 }
 
 type ThreadSafeWriter struct {
