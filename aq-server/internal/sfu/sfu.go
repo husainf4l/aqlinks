@@ -124,6 +124,7 @@ func SignalPeerConnections() { // nolint
 		// Use index-based loop with bounds checking to safely remove elements
 		for i := 0; i < len(*sfuCtx.PeerConnections); {
 			currentPeer := (*sfuCtx.PeerConnections)[i]
+			sfuCtx.Logger.Infof("[SignalPeerConnections] Processing peer %d/%d: %s in room %s", i+1, len(*sfuCtx.PeerConnections), currentPeer.Username, currentPeer.RoomID)
 			
 			if currentPeer.PeerConnection.ConnectionState() == webrtc.PeerConnectionStateClosed {
 				// Remove closed connection and restart from beginning
@@ -193,11 +194,13 @@ func SignalPeerConnections() { // nolint
 			// (can't create offer if we're waiting for answer to previous offer)
 			if currentPeer.PeerConnection.SignalingState() != webrtc.SignalingStateStable {
 				// Skip this peer, it's in the middle of an offer/answer exchange
+				sfuCtx.Logger.Infof("[SignalPeerConnections] Skipping peer %s - signalingState=%v (not stable)", currentPeer.Username, currentPeer.PeerConnection.SignalingState())
 				i++
 				continue
 			}
 
 			// Create and send offer
+			sfuCtx.Logger.Infof("[SignalPeerConnections] Creating offer for peer %s (senders=%d)", currentPeer.Username, len(existingSenders))
 			offer, err := currentPeer.PeerConnection.CreateOffer(nil)
 			if err != nil {
 				sfuCtx.Logger.Errorf("Failed to create offer: %v", err)

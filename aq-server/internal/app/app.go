@@ -132,6 +132,8 @@ func (a *App) Run() error {
 
 	// Register route handlers for WebSocket and static files
 	a.serveMux.HandleFunc("/", a.indexHandler)
+	a.serveMux.HandleFunc("/aq_server/", a.indexHandler)
+	a.serveMux.HandleFunc("/aq_server/ws", a.websocketHandler)
 	a.serveMux.HandleFunc("/ws", a.websocketHandler)
 	a.serveMux.HandleFunc("/health", a.healthHandler)
 	a.serveMux.HandleFunc("/metrics", a.metricsHandler)
@@ -196,8 +198,15 @@ func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
+	// Determine the WebSocket URL based on the request scheme
+	scheme := "ws://"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "wss://"
+	}
+	wsURL := scheme + r.Host + "/aq_server/ws"
+	
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.indexTemplate.Execute(w, nil); err != nil {
+	if err := a.indexTemplate.Execute(w, wsURL); err != nil {
 		a.log.Errorf("Error executing index template: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
