@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
+	"aq-server/internal/keepalive"
 	"aq-server/internal/types"
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
@@ -30,6 +32,7 @@ type HandlerContext struct {
 	RemoveTrack           func(*webrtc.TrackLocalStaticRTP)
 	SignalPeerConnections func()
 	BroadcastChat         func(types.ChatMessage, *types.ThreadSafeWriter)
+	KeepaliveConfig       keepalive.Config // Keepalive configuration
 }
 
 var handlerCtx *HandlerContext
@@ -96,6 +99,11 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	}
 
 	c := &types.ThreadSafeWriter{Conn: unsafeConn, Mutex: sync.Mutex{}} // nolint
+
+	// Initialize keepalive monitoring
+	monitor := keepalive.NewMonitor(unsafeConn, handlerCtx.Logger, handlerCtx.KeepaliveConfig)
+	monitor.Start()
+	defer monitor.Stop()
 
 	// When this frame returns close the Websocket
 	defer c.Close() //nolint
@@ -207,6 +215,29 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	// Signal for the new PeerConnection
 	handlerCtx.SignalPeerConnections()
+
+	// Monitor connection health in background
+	healthCheckTicker := time.NewTicker(handlerCtx.KeepaliveConfig.PongWaitTime)
+	defer healthCheckTicker.Stop()
+
+	healthCheckDone := make(chan struct{})
+	defer close(healthCheckDone)
+
+	go func() {
+		for {
+			select {
+			case <-healthCheckDone:
+				return
+			case <-healthCheckTicker.C:
+				// Check if connection is alive
+				if !monitor.IsAlive() {
+					handlerCtx.Logger.Warnf("Connection health check failed, closing stale connection")
+					c.Close()
+					return
+				}
+			}
+		}
+	}()
 
 	message := &types.WebsocketMessage{}
 	for {

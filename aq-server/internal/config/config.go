@@ -3,14 +3,19 @@ package config
 import (
 	"flag"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds application configuration
 type Config struct {
-	Addr     string
-	LogLevel string
-	Env      string
+	Addr              string
+	LogLevel          string
+	Env               string
+	KeepalivePingInt  time.Duration // Keepalive ping interval
+	KeepalivePongWait time.Duration // Time to wait for pong
+	WriteDeadline     time.Duration // Write operation timeout
 }
 
 // Load parses and returns the application configuration
@@ -22,12 +27,23 @@ func Load() *Config {
 	addr := flag.String("addr", getEnv("SERVER_ADDR", ":8080"), "http service address")
 	logLevel := flag.String("log-level", getEnv("LOG_LEVEL", "info"), "log level (debug, info, warn, error)")
 	env := flag.String("env", getEnv("ENVIRONMENT", "development"), "environment (development, staging, production)")
+	pingInt := flag.String("keepalive-ping", getEnv("KEEPALIVE_PING", "30"), "keepalive ping interval in seconds")
+	pongWait := flag.String("keepalive-pong", getEnv("KEEPALIVE_PONG", "10"), "keepalive pong wait time in seconds")
+	writeDeadline := flag.String("write-deadline", getEnv("WRITE_DEADLINE", "5"), "write operation timeout in seconds")
 	flag.Parse()
 
+	// Parse durations
+	pingIntSecs, _ := strconv.ParseInt(*pingInt, 10, 64)
+	pongWaitSecs, _ := strconv.ParseInt(*pongWait, 10, 64)
+	writeDeadlineSecs, _ := strconv.ParseInt(*writeDeadline, 10, 64)
+
 	return &Config{
-		Addr:     *addr,
-		LogLevel: strings.ToLower(*logLevel),
-		Env:      strings.ToLower(*env),
+		Addr:              *addr,
+		LogLevel:          strings.ToLower(*logLevel),
+		Env:               strings.ToLower(*env),
+		KeepalivePingInt:  time.Duration(pingIntSecs) * time.Second,
+		KeepalivePongWait: time.Duration(pongWaitSecs) * time.Second,
+		WriteDeadline:     time.Duration(writeDeadlineSecs) * time.Second,
 	}
 }
 

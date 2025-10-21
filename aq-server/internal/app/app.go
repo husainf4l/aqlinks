@@ -12,6 +12,7 @@ import (
 
 	"aq-server/internal/config"
 	"aq-server/internal/handlers"
+	"aq-server/internal/keepalive"
 	"aq-server/internal/routes"
 	"aq-server/internal/sfu"
 	"aq-server/internal/types"
@@ -53,6 +54,12 @@ func New() (*App, error) {
 	app.indexTemplate = template.Must(template.New("").Parse(string(indexHTML)))
 
 	// Initialize handlers package with context
+	keepaliveCfg := keepalive.Config{
+		PingInterval:  app.cfg.KeepalivePingInt,
+		PongWaitTime:  app.cfg.KeepalivePongWait,
+		WriteDeadline: app.cfg.WriteDeadline,
+	}
+	
 	handlers.InitContext(&handlers.HandlerContext{
 		Upgrader:              app.upgrader,
 		Logger:                app.log,
@@ -62,6 +69,7 @@ func New() (*App, error) {
 		RemoveTrack:           sfu.RemoveTrack,
 		SignalPeerConnections: sfu.SignalPeerConnections,
 		BroadcastChat:         sfu.BroadcastChat,
+		KeepaliveConfig:       keepaliveCfg,
 	})
 
 	// Initialize SFU package with context

@@ -116,6 +116,12 @@
   </body>
 
   <script>
+    // Connection state
+    let reconnectAttempts = 0
+    const maxReconnectAttempts = 10
+    const baseReconnectDelay = 1000 // 1 second
+    let reconnectTimer = null
+
     // Chat functions
     function addChatMessage(message, time) {
       const chatMessages = document.getElementById('chatMessages')
@@ -140,6 +146,12 @@
       const message = input.value.trim()
       if (!message) return
 
+      // Check if WebSocket is open
+      if (ws.readyState !== WebSocket.OPEN) {
+        console.warn('WebSocket is not connected, message not sent')
+        return
+      }
+
       // Send to server
       ws.send(JSON.stringify({
         event: 'chat',
@@ -151,6 +163,113 @@
       addChatMessage(`You: ${message}`, now)
       
       input.value = ''
+    }
+
+    // Calculate exponential backoff with jitter
+    function getReconnectDelay(attempt) {
+      const delay = Math.min(baseReconnectDelay * Math.pow(2, attempt), 30000)
+      const jitter = Math.random() * 1000
+      return delay + jitter
+    }
+
+    // Initiate reconnection with exponential backoff
+    function scheduleReconnect(stream, pc) {
+      if (reconnectAttempts >= maxReconnectAttempts) {
+        console.error('Max reconnection attempts reached')
+        addChatMessage('Connection lost - max reconnect attempts reached', new Date().toLocaleTimeString())
+        return
+      }
+
+      const delay = getReconnectDelay(reconnectAttempts)
+      reconnectAttempts++
+      
+      console.log(`Scheduling reconnect in ${Math.round(delay)}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`)
+      addChatMessage(`Reconnecting in ${Math.round(delay / 1000)}s... (attempt ${reconnectAttempts})`, new Date().toLocaleTimeString())
+
+      reconnectTimer = setTimeout(() => {
+        initializeWebSocket(stream, pc)
+      }, delay)
+    }
+
+    // Initialize WebSocket with reconnection logic
+    function initializeWebSocket(stream, pc) {
+      let ws = new WebSocket("{{.}}")
+      
+      ws.onopen = function() {
+        console.log('WebSocket connected')
+        reconnectAttempts = 0 // Reset on successful connection
+        addChatMessage('Connected to server', new Date().toLocaleTimeString())
+      }
+
+      ws.onclose = function(evt) {
+        console.log('WebSocket closed, scheduling reconnect...')
+        scheduleReconnect(stream, pc)
+      }
+
+      ws.onmessage = function(evt) {
+        let msg = JSON.parse(evt.data)
+        if (!msg) {
+          return console.log('failed to parse msg')
+        }
+
+        switch (msg.event) {
+          case 'offer':
+            let offer = JSON.parse(msg.data)
+            if (!offer) {
+              return console.log('failed to parse offer')
+            }
+            pc.setRemoteDescription(offer)
+            pc.createAnswer().then(answer => {
+              pc.setLocalDescription(answer)
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
+              }
+            })
+            return
+
+          case 'candidate':
+            let candidate = JSON.parse(msg.data)
+            if (!candidate) {
+              return console.log('failed to parse candidate')
+            }
+
+            pc.addIceCandidate(candidate).catch(err => {
+              console.warn('Failed to add ICE candidate:', err)
+            })
+            return
+
+          case 'chat':
+            // Handle incoming chat message
+            addChatMessage(`Remote: ${msg.message}`, msg.time)
+            return
+        }
+      }
+
+      ws.onerror = function(evt) {
+        console.error("WebSocket ERROR: " + evt.data)
+      }
+
+      // Chat button click
+      document.getElementById('sendBtn').addEventListener('click', () => sendChatMessage(ws))
+      
+      // Chat enter key
+      document.getElementById('chatInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          sendChatMessage(ws)
+        }
+      })
+
+      pc.onicecandidate = e => {
+        if (!e.candidate) {
+          return
+        }
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
+        }
+      }
+
+      return ws
     }
 
     // WebRTC and Chat initialization
@@ -180,70 +299,11 @@
       }
 
       document.getElementById('localVideo').srcObject = stream
+
       stream.getTracks().forEach(track => pc.addTrack(track, stream))
 
-      let ws = new WebSocket("{{.}}")
-      
-      // Chat button click
-      document.getElementById('sendBtn').addEventListener('click', () => sendChatMessage(ws))
-      
-      // Chat enter key
-      document.getElementById('chatInput').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          sendChatMessage(ws)
-        }
-      })
-
-      pc.onicecandidate = e => {
-        if (!e.candidate) {
-          return
-        }
-
-        ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
-      }
-
-      ws.onclose = function(evt) {
-        window.alert("Websocket has closed")
-      }
-
-      ws.onmessage = function(evt) {
-        let msg = JSON.parse(evt.data)
-        if (!msg) {
-          return console.log('failed to parse msg')
-        }
-
-        switch (msg.event) {
-          case 'offer':
-            let offer = JSON.parse(msg.data)
-            if (!offer) {
-              return console.log('failed to parse answer')
-            }
-            pc.setRemoteDescription(offer)
-            pc.createAnswer().then(answer => {
-              pc.setLocalDescription(answer)
-              ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
-            })
-            return
-
-          case 'candidate':
-            let candidate = JSON.parse(msg.data)
-            if (!candidate) {
-              return console.log('failed to parse candidate')
-            }
-
-            pc.addIceCandidate(candidate)
-            return
-
-          case 'chat':
-            // Handle incoming chat message
-            addChatMessage(`Remote: ${msg.message}`, msg.time)
-            return
-        }
-      }
-
-      ws.onerror = function(evt) {
-        console.log("ERROR: " + evt.data)
-      }
+      // Initialize WebSocket with reconnection support
+      initializeWebSocket(stream, pc)
     }).catch(window.alert)
   </script>
 </html>
