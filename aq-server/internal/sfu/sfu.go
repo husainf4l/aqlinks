@@ -161,31 +161,38 @@ func SignalPeerConnections() { // nolint
 			}
 
 			// Add all tracks from peers in the SAME ROOM
-			// Only add tracks if there are other peers in the same room
+			// Check if there are other peers in the same room by looking at the global peer list
 			var hasRoomPeers bool
-			if sfuCtx.RoomManager != nil {
-				roomPeerCount := sfuCtx.RoomManager.GetRoomPeerCount(currentPeer.RoomID)
-				hasRoomPeers = roomPeerCount > 1 // More than just this peer
-			} else {
-				// Fallback: use all peers if no room manager (backward compatibility)
-				for j := range *sfuCtx.PeerConnections {
-					if (*sfuCtx.PeerConnections)[j].Websocket != currentPeer.Websocket {
-						hasRoomPeers = true
-						break
+			var roomPeerTracks []string // Track IDs from peers in the same room
+			
+			for j := range *sfuCtx.PeerConnections {
+				otherPeer := (*sfuCtx.PeerConnections)[j]
+				// Check if this is a different peer in the same room
+				if otherPeer.Websocket != currentPeer.Websocket && otherPeer.RoomID == currentPeer.RoomID {
+					hasRoomPeers = true
+					sfuCtx.Logger.Debugf("Found peer %s in room %s for peer %s", otherPeer.Username, currentPeer.RoomID, currentPeer.Username)
+					
+					// Collect track IDs from this room peer
+					for _, receiver := range otherPeer.PeerConnection.GetReceivers() {
+						if receiver.Track() != nil {
+							roomPeerTracks = append(roomPeerTracks, receiver.Track().ID())
+						}
 					}
 				}
 			}
 
-			// Add tracks if there are other peers in the room
+			// Add tracks only from peers in the SAME ROOM
 			if hasRoomPeers {
-				for trackID, track := range *sfuCtx.TrackLocals {
-					if _, ok := existingSenders[trackID]; !ok {
-						// Add track
-						if _, err := currentPeer.PeerConnection.AddTrack(track); err != nil {
-							sfuCtx.Logger.Debugf("Failed to add track: %v", err)
-							return true
+				for _, trackID := range roomPeerTracks {
+					if track, ok := (*sfuCtx.TrackLocals)[trackID]; ok {
+						if _, ok := existingSenders[trackID]; !ok {
+							// Add track
+							if _, err := currentPeer.PeerConnection.AddTrack(track); err != nil {
+								sfuCtx.Logger.Debugf("Failed to add track: %v", err)
+								return true
+							}
+							existingSenders[trackID] = true
 						}
-						existingSenders[trackID] = true
 					}
 				}
 			}

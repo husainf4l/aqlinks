@@ -24,6 +24,7 @@ type PeerConnectionState struct {
 	Websocket      *ThreadSafeWriter
 	Username       string // New: username of the peer
 	RoomID         string // New: room ID this peer belongs to
+	UserType       string // New: user type (host, guest, presenter)
 }
 
 type ThreadSafeWriter struct {

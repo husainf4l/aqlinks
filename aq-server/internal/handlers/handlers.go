@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"aq-server/internal/keepalive"
 	"aq-server/internal/room"
 	"aq-server/internal/types"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
 	"github.com/pion/rtp"
@@ -75,6 +77,42 @@ func isHeaderWritten(w http.ResponseWriter) bool {
 	return false // For websocket upgrades, this is less critical
 }
 
+// TokenClaims represents the JWT token claims
+type TokenClaims struct {
+	UserID   string `json:"user_id"`
+	Email    string `json:"email"`
+	Room     string `json:"room"`
+	UserType string `json:"user_type"` // "host", "guest", "presenter"
+	jwt.RegisteredClaims
+}
+
+// ValidateJWTToken validates and parses a JWT token
+func ValidateJWTToken(tokenString string) (*TokenClaims, error) {
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "tt55oo77" // Default for development
+	}
+
+	claims := &TokenClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		// Verify the signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("token parse failed: %v", err)
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+
+	return claims, nil
+}
+
 // Handle incoming websockets.
 func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	defer func() {
@@ -93,18 +131,37 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		return
 	}
 
-	// Extract room and username from query parameters
-	roomID := r.URL.Query().Get("room")
-	if roomID == "" {
-		roomID = "default" // Default room if not specified
-	}
-	
-	username := r.URL.Query().Get("username")
-	if username == "" {
-		username = "anonymous" // Default username if not specified
+	// Extract and validate JWT token from query parameters
+	tokenString := r.URL.Query().Get("token")
+	if tokenString == "" {
+		http.Error(w, "Unauthorized: JWT token is required", http.StatusUnauthorized)
+		return
 	}
 
-	handlerCtx.Logger.Debugf("Client connecting to room=%s with username=%s", roomID, username)
+	// Validate JWT token
+	claims, err := ValidateJWTToken(tokenString)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unauthorized: %v", err), http.StatusUnauthorized)
+		return
+	}
+
+	// Extract room and username from JWT claims
+	roomID := claims.Room
+	if roomID == "" {
+		roomID = "default"
+	}
+
+	username := claims.UserID
+	if username == "" {
+		username = "anonymous"
+	}
+
+	userType := claims.UserType
+	if userType == "" {
+		userType = "guest"
+	}
+
+	handlerCtx.Logger.Debugf("Client connecting to room=%s with username=%s (type=%s)", roomID, username, userType)
 
 	// Upgrade HTTP request to Websocket
 	unsafeConn, err := handlerCtx.Upgrader.Upgrade(w, r, nil)
@@ -159,6 +216,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		Websocket:      c,
 		Username:       username,
 		RoomID:         roomID,
+		UserType:       userType,
 	}
 	
 	handlerCtx.ListLock.Lock()

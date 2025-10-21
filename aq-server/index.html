@@ -167,19 +167,30 @@
     </style>
   </head>
   <body>
+    <!-- Script for CryptoJS (for JWT token generation) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    
     <!-- Room Selection Modal -->
     <div id="roomModal" class="modal">
       <div class="modal-content">
         <h2>🏠 Join Video Room</h2>
-        <div class="form-group">
-          <label for="roomInput">Room ID:</label>
-          <input type="text" id="roomInput" placeholder="e.g., room-123" value="default">
-        </div>
-        <div class="form-group">
-          <label for="usernameInput">Your Name:</label>
-          <input type="text" id="usernameInput" placeholder="Enter your name" value="User">
-        </div>
-        <button class="modal-button" id="joinBtn">Join Room</button>
+              <div class="form-group">
+        <label for="roomInput">Room ID:</label>
+        <input type="text" id="roomInput" placeholder="e.g., room-123" value="default">
+      </div>
+      <div class="form-group">
+        <label for="usernameInput">Your Name:</label>
+        <input type="text" id="usernameInput" placeholder="Enter your name" value="User">
+      </div>
+      <div class="form-group">
+        <label for="userTypeInput">Role:</label>
+        <select id="userTypeInput" style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+          <option value="guest">Guest</option>
+          <option value="host">Host</option>
+          <option value="presenter">Presenter</option>
+        </select>
+      </div>
+      <button class="modal-button" id="joinBtn">Join Room</button>
       </div>
     </div>
     <div class="container">
@@ -206,9 +217,13 @@
   </body>
 
   <script>
+    // JWT Configuration
+    const JWT_SECRET = "tt55oo77" // Must match server JWT_SECRET
+    
     // Room and connection state
     let currentRoom = 'default'
     let currentUsername = 'User'
+    let currentUserType = 'guest'
     let roomJoined = false
 
     // Connection state
@@ -216,6 +231,36 @@
     const maxReconnectAttempts = 10
     const baseReconnectDelay = 1000
     let reconnectTimer = null
+
+    // JWT Token generation function
+    function generateJWTToken(userId, room, userType) {
+      const now = Math.floor(Date.now() / 1000)
+      const exp = now + (24 * 60 * 60) // 24 hour expiration
+      
+      const header = {
+        alg: "HS256",
+        typ: "JWT"
+      }
+      
+      const payload = {
+        user_id: userId,
+        email: `${userId}@example.com`,
+        room: room,
+        user_type: userType,
+        iat: now,
+        exp: exp
+      }
+      
+      const headerEncoded = btoa(JSON.stringify(header)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+      const payloadEncoded = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+      
+      const signatureInput = `${headerEncoded}.${payloadEncoded}`
+      const signature = CryptoJS.HmacSHA256(signatureInput, JWT_SECRET)
+      const signatureEncoded = signature.toString(CryptoJS.enc.Base64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+      
+      const token = `${signatureInput}.${signatureEncoded}`
+      return token
+    }
 
     // Room management functions
     function getUrlParams() {
@@ -226,12 +271,13 @@
       }
     }
 
-    function showRoomBadge(room, username) {
+    function showRoomBadge(room, username, userType) {
       document.getElementById('roomName').textContent = room
       document.getElementById('userName').textContent = username
       document.getElementById('roomBadge').style.display = 'block'
       currentRoom = room
       currentUsername = username
+      currentUserType = userType
     }
 
     function hideRoomModal() {
@@ -245,10 +291,11 @@
     function handleRoomJoin() {
       const room = document.getElementById('roomInput').value.trim() || 'default'
       const username = document.getElementById('usernameInput').value.trim() || 'User'
-      showRoomBadge(room, username)
+      const userType = document.getElementById('userTypeInput').value || 'guest'
+      showRoomBadge(room, username, userType)
       hideRoomModal()
       roomJoined = true
-      return { room, username }
+      return { room, username, userType }
     }
 
     function initRoomSelection() {
@@ -258,9 +305,9 @@
       if (urlParams.room) {
         const room = urlParams.room
         const username = urlParams.username || 'User'
-        showRoomBadge(room, username)
+        showRoomBadge(room, username, 'guest')
         hideRoomModal()
-        return Promise.resolve({ room, username })
+        return Promise.resolve({ room, username, userType: 'guest' })
       }
       
       // Show modal for manual entry
@@ -347,20 +394,23 @@
       addChatMessage(`Reconnecting...`, new Date().toLocaleTimeString())
 
       reconnectTimer = setTimeout(() => {
-        initializeWebSocket(stream, pc, currentRoom, currentUsername)
+        initializeWebSocket(stream, pc, currentRoom, currentUsername, currentUserType)
       }, delay)
     }
 
     // Initialize WebSocket with reconnection logic
-    function initializeWebSocket(stream, pc, room, username) {
+    function initializeWebSocket(stream, pc, room, username, userType) {
+      // Generate JWT token
+      const token = generateJWTToken(username, room, userType)
+      
       // Use the WebSocket URL provided by the server template
       const baseWsUrl = "{{.}}"
       
-      // Append room and username to the WebSocket URL
+      // Append JWT token to the WebSocket URL
       const separator = baseWsUrl.includes('?') ? '&' : '?'
-      const wsUrl = `${baseWsUrl}${separator}room=${encodeURIComponent(room)}&username=${encodeURIComponent(username)}`
+      const wsUrl = `${baseWsUrl}${separator}token=${encodeURIComponent(token)}`
       
-      console.log('Connecting to WebSocket:', wsUrl)
+      console.log('Connecting to WebSocket with JWT token')
       let ws = new WebSocket(wsUrl)
       
       ws.onopen = function() {
@@ -444,7 +494,7 @@
     async function initialize() {
       try {
         // Step 1: Get room and username
-        const { room, username } = await initRoomSelection()
+        const { room, username, userType } = await initRoomSelection()
         
         // Step 2: Get media stream
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
@@ -476,8 +526,8 @@
         document.getElementById('localVideo').srcObject = stream
         stream.getTracks().forEach(track => pc.addTrack(track, stream))
 
-        // Step 4: Initialize WebSocket with room/username
-        initializeWebSocket(stream, pc, room, username)
+        // Step 4: Initialize WebSocket with room/username/userType and JWT token
+        initializeWebSocket(stream, pc, room, username, userType)
       } catch (err) {
         console.error('Initialization error:', err)
         alert('Error: ' + err.message)
