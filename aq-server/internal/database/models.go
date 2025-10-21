@@ -140,7 +140,7 @@ func GetCompanyByAPIKey(apiKey string) (*Company, error) {
 // GetCompanyByID retrieves company by company ID
 func GetCompanyByID(companyID string) (*Company, error) {
 	company := &Company{}
-	result := DB.Where("company_id = ?", companyID).First(company)
+	result := DB.Where("id = ?", companyID).First(company)
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			return nil, nil
