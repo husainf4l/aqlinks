@@ -49,6 +49,11 @@ func DispatchKeyFrame() {
 	sfuCtx.ListLock.Lock()
 	defer sfuCtx.ListLock.Unlock()
 
+	// Safety check: return if no peers
+	if len(*sfuCtx.PeerConnections) == 0 {
+		return
+	}
+
 	for i := range *sfuCtx.PeerConnections {
 		for _, receiver := range (*sfuCtx.PeerConnections)[i].PeerConnection.GetReceivers() {
 			if receiver.Track() == nil {
