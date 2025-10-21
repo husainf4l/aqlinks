@@ -166,7 +166,8 @@ func (a *App) Run() error {
 
 // indexHandler serves the HTML UI
 func (a *App) indexHandler(c *fiber.Ctx) error {
-	return c.SendStatus(fiber.StatusOK)
+	// Serve index.html with proper content type
+	return c.SendFile("index.html")
 }
 
 // websocketHandler handles WebSocket connections
