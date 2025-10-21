@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
+	"strings"
 	"time"
 
 	"aq-server/internal/database"
 	"github.com/google/uuid"
-	"github.com/gofiber/fiber/v2"
 )
 
 // RoomRequest represents a room creation/update request
@@ -29,20 +31,27 @@ type RoomResponse struct {
 }
 
 // ListRoomsHandler lists all rooms for a company
-func ListRoomsHandler(c *fiber.Ctx) error {
-	companyID := c.Locals("company_id")
+func ListRoomsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	companyID := r.Context().Value(CompanyIDKey)
 	if companyID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
 			"error": "company id not found",
 		})
+		return
 	}
 
 	var rooms []database.Room
 	result := database.DB.Where("company_id = ?", companyID.(string)).Find(&rooms)
 	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "database error: " + result.Error.Error(),
 		})
+		return
 	}
 
 	// Convert to response format
@@ -60,30 +69,39 @@ func ListRoomsHandler(c *fiber.Ctx) error {
 		}
 	}
 
-	return c.JSON(responses)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(responses)
 }
 
 // CreateRoomHandler creates a new room
-func CreateRoomHandler(c *fiber.Ctx) error {
-	companyID := c.Locals("company_id")
+func CreateRoomHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	companyID := r.Context().Value(CompanyIDKey)
 	if companyID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
 			"error": "company id not found",
 		})
+		return
 	}
 
 	var req RoomRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid request body: " + err.Error(),
 		})
+		return
 	}
 
 	// Validate request
 	if req.RoomID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "room_id is required",
 		})
+		return
 	}
 
 	// Create room
@@ -102,12 +120,15 @@ func CreateRoomHandler(c *fiber.Ctx) error {
 
 	result := database.DB.Create(room)
 	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "failed to create room: " + result.Error.Error(),
 		})
+		return
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(RoomResponse{
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(RoomResponse{
 		ID:              room.ID,
 		CompanyID:       room.CompanyID,
 		RoomID:          room.RoomID,
@@ -120,29 +141,47 @@ func CreateRoomHandler(c *fiber.Ctx) error {
 }
 
 // GetRoomHandler gets a specific room
-func GetRoomHandler(c *fiber.Ctx) error {
-	companyID := c.Locals("company_id")
-	if companyID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "company id not found",
-		})
+func GetRoomHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
-	roomID := c.Params("roomId")
+	companyID := r.Context().Value(CompanyIDKey)
+	if companyID == nil {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "company id not found",
+		})
+		return
+	}
+
+	// Extract room ID from path: /api/v1/rooms/{roomId}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		respondJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid path",
+		})
+		return
+	}
+	roomID := parts[4]
+
 	var room database.Room
 	result := database.DB.Where("id = ? AND company_id = ?", roomID, companyID.(string)).First(&room)
 	if result.Error != nil {
 		if result.Error.Error() == "record not found" {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			respondJSON(w, http.StatusNotFound, map[string]string{
 				"error": "room not found",
 			})
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "database error: " + result.Error.Error(),
 		})
+		return
 	}
 
-	return c.JSON(RoomResponse{
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(RoomResponse{
 		ID:              room.ID,
 		CompanyID:       room.CompanyID,
 		RoomID:          room.RoomID,
@@ -155,20 +194,36 @@ func GetRoomHandler(c *fiber.Ctx) error {
 }
 
 // UpdateRoomHandler updates a room
-func UpdateRoomHandler(c *fiber.Ctx) error {
-	companyID := c.Locals("company_id")
-	if companyID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "company id not found",
-		})
+func UpdateRoomHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
-	roomID := c.Params("roomId")
+	companyID := r.Context().Value(CompanyIDKey)
+	if companyID == nil {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "company id not found",
+		})
+		return
+	}
+
+	// Extract room ID from path
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		respondJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid path",
+		})
+		return
+	}
+	roomID := parts[4]
+
 	var req RoomRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid request body: " + err.Error(),
 		})
+		return
 	}
 
 	// Get room
@@ -176,13 +231,15 @@ func UpdateRoomHandler(c *fiber.Ctx) error {
 	result := database.DB.Where("id = ? AND company_id = ?", roomID, companyID.(string)).First(&room)
 	if result.Error != nil {
 		if result.Error.Error() == "record not found" {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			respondJSON(w, http.StatusNotFound, map[string]string{
 				"error": "room not found",
 			})
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "database error: " + result.Error.Error(),
 		})
+		return
 	}
 
 	// Update fields
@@ -199,12 +256,14 @@ func UpdateRoomHandler(c *fiber.Ctx) error {
 	// Save
 	result = database.DB.Save(&room)
 	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "failed to update room: " + result.Error.Error(),
 		})
+		return
 	}
 
-	return c.JSON(RoomResponse{
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(RoomResponse{
 		ID:              room.ID,
 		CompanyID:       room.CompanyID,
 		RoomID:          room.RoomID,
@@ -217,37 +276,54 @@ func UpdateRoomHandler(c *fiber.Ctx) error {
 }
 
 // DeleteRoomHandler deletes a room
-func DeleteRoomHandler(c *fiber.Ctx) error {
-	companyID := c.Locals("company_id")
-	if companyID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "company id not found",
-		})
+func DeleteRoomHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
-	roomID := c.Params("roomId")
+	companyID := r.Context().Value(CompanyIDKey)
+	if companyID == nil {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "company id not found",
+		})
+		return
+	}
+
+	// Extract room ID from path
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		respondJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid path",
+		})
+		return
+	}
+	roomID := parts[4]
 
 	// Check room exists and belongs to company
 	var room database.Room
 	result := database.DB.Where("id = ? AND company_id = ?", roomID, companyID.(string)).First(&room)
 	if result.Error != nil {
 		if result.Error.Error() == "record not found" {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			respondJSON(w, http.StatusNotFound, map[string]string{
 				"error": "room not found",
 			})
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "database error: " + result.Error.Error(),
 		})
+		return
 	}
 
 	// Delete
 	result = database.DB.Delete(&room)
 	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "failed to delete room: " + result.Error.Error(),
 		})
+		return
 	}
 
-	return c.Status(fiber.StatusNoContent).Send(nil)
+	w.WriteHeader(http.StatusNoContent)
 }

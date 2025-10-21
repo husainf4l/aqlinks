@@ -1,10 +1,11 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
 	"time"
 
 	"aq-server/internal/database"
-	"github.com/gofiber/fiber/v2"
 )
 
 // TokenRequest represents a token generation request
@@ -23,60 +24,73 @@ type TokenResponse struct {
 }
 
 // GenerateTokenHandler generates a JWT token for room access
-func GenerateTokenHandler(c *fiber.Ctx) error {
+func GenerateTokenHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req TokenRequest
 
 	// Parse request body
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid request body: " + err.Error(),
 		})
+		return
 	}
 
 	// Validate request
 	if req.RoomID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "room_id is required",
 		})
+		return
 	}
 	if req.UserName == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "user_name is required",
 		})
+		return
 	}
 	if req.Duration < 60 || req.Duration > 86400 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "duration must be between 60 and 86400 seconds",
 		})
+		return
 	}
 
 	// Get API key from context (set by middleware)
-	apiKey := c.Locals("api_key")
+	apiKey := r.Context().Value(APIKeyKey)
 	if apiKey == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
 			"error": "api key not found",
 		})
+		return
 	}
 
 	// Get company by API key
 	company, err := database.GetCompanyByAPIKey(apiKey.(string))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "database error: " + err.Error(),
 		})
+		return
 	}
 	if company == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		respondJSON(w, http.StatusUnauthorized, map[string]string{
 			"error": "invalid api key",
 		})
+		return
 	}
 
 	// Generate JWT token
 	token, expiresAt, err := GenerateToken(company.ID, req.RoomID, req.UserName, company.SecretKey, req.Duration)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "failed to generate token: " + err.Error(),
 		})
+		return
 	}
 
 	// Hash token for storage
@@ -92,12 +106,15 @@ func GenerateTokenHandler(c *fiber.Ctx) error {
 	}
 
 	if err := database.CreateToken(dbToken); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "failed to store token: " + err.Error(),
 		})
+		return
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(TokenResponse{
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(TokenResponse{
 		Token:     token,
 		ExpiresAt: expiresAt,
 		RoomID:    req.RoomID,

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,16 +20,17 @@ import (
 	"aq-server/internal/room"
 	"aq-server/internal/sfu"
 	"aq-server/internal/types"
-	"github.com/gofiber/fiber/v2"
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v4"
+	"github.com/urfave/negroni/v3"
 )
 
 // App holds the application state
 type App struct {
 	cfg             *config.Config
-	fiberApp        *fiber.App
+	httpServer      *http.Server
+	serveMux        *http.ServeMux
 	upgrader        websocket.Upgrader
 	indexTemplate   *template.Template
 	listLock        sync.RWMutex
@@ -50,11 +52,20 @@ func New() (*App, error) {
 		return nil, err
 	}
 	
+	// Create HTTP server and mux
+	mux := http.NewServeMux()
+	httpServer := &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	
 	app := &App{
-		cfg: cfg,
-		fiberApp: fiber.New(fiber.Config{
-			Prefork: false,
-		}),
+		cfg:        cfg,
+		httpServer: httpServer,
+		serveMux:   mux,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -102,28 +113,42 @@ func New() (*App, error) {
 	return app, nil
 }
 
-// Run starts the Fiber server with all routes (REST API, WebSocket, Static files)
+// Run starts the HTTP server with all routes (REST API, WebSocket, Static files)
 func (a *App) Run() error {
-	// Setup REST API routes with Fiber (best practice - single unified framework)
-	if err := api.SetupRoutes(a.fiberApp); err != nil {
+	// Create a negroni middleware stack
+	n := negroni.New()
+	
+	// Add logging middleware
+	n.Use(negroni.NewLogger())
+	
+	// Add recovery middleware
+	n.Use(negroni.NewRecovery())
+	
+	// Setup REST API routes with net/http
+	if err := api.SetupRoutes(a.serveMux); err != nil {
 		a.log.Errorf("Failed to setup API routes: %v", err)
 		return err
 	}
 
-	// Mount legacy route handlers for WebSocket and static files
-	// Convert net/http handlers to Fiber using a wrapper
-	a.fiberApp.Get("/", a.indexHandler)
-	a.fiberApp.Get("/ws", a.websocketHandler)
-	a.fiberApp.Get("/health", a.healthHandler)
-	a.fiberApp.Get("/metrics", a.metricsHandler)
+	// Register route handlers for WebSocket and static files
+	a.serveMux.HandleFunc("/", a.indexHandler)
+	a.serveMux.HandleFunc("/ws", a.websocketHandler)
+	a.serveMux.HandleFunc("/health", a.healthHandler)
+	a.serveMux.HandleFunc("/metrics", a.metricsHandler)
+
+	// Use the ServeMux as the final handler in negroni
+	n.UseHandler(a.serveMux)
+	
+	// Update server handler to use negroni
+	a.httpServer.Handler = n
 
 	// Channel to signal server errors
 	serverErrors := make(chan error, 1)
 
-	// Start Fiber server
+	// Start HTTP server
 	go func() {
-		a.log.Infof("Starting Fiber server on :%d", a.cfg.Port)
-		serverErrors <- a.fiberApp.Listen(fmt.Sprintf(":%d", a.cfg.Port))
+		a.log.Infof("Starting HTTP server on %s", a.httpServer.Addr)
+		serverErrors <- a.httpServer.ListenAndServe()
 	}()
 
 	// Setup signal handling for graceful shutdown
@@ -135,7 +160,7 @@ func (a *App) Run() error {
 	case sig := <-sigChan:
 		a.log.Infof("Received signal: %v, initiating graceful shutdown", sig)
 	case err := <-serverErrors:
-		if err != nil {
+		if err != nil && err != http.ErrServerClosed {
 			a.log.Errorf("Server error: %v", err)
 			return err
 		}
@@ -149,7 +174,7 @@ func (a *App) Run() error {
 	a.shutdown()
 
 	a.log.Infof("Shutting down server...")
-	if err := a.fiberApp.ShutdownWithContext(ctx); err != nil {
+	if err := a.httpServer.Shutdown(ctx); err != nil {
 		a.log.Errorf("Server shutdown error: %v", err)
 		return err
 	}
@@ -165,38 +190,63 @@ func (a *App) Run() error {
 }
 
 // indexHandler serves the HTML UI
-func (a *App) indexHandler(c *fiber.Ctx) error {
-	// Serve index.html with proper content type
-	return c.SendFile("index.html")
+func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.indexTemplate.Execute(w, nil); err != nil {
+		a.log.Errorf("Error executing index template: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }
 
 // websocketHandler handles WebSocket connections
-func (a *App) websocketHandler(c *fiber.Ctx) error {
-	// Fiber doesn't have built-in WebSocket handler like net/http
-	// We need to use gorilla websocket with a workaround
-	// For now, return 200 OK (to be implemented with proper WebSocket support)
-	return c.SendStatus(fiber.StatusOK)
+func (a *App) websocketHandler(w http.ResponseWriter, r *http.Request) {
+	handlers.WebsocketHandler(w, r)
 }
 
 // healthHandler returns health status
-func (a *App) healthHandler(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
+func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	health := map[string]interface{}{
 		"status":    "healthy",
 		"message":   "Server is running",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"peers":     len(a.peerConnections),
-	})
+	}
+	
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		a.log.Errorf("Error encoding health response: %v", err)
+	}
 }
 
 // metricsHandler returns server metrics
-func (a *App) metricsHandler(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"active_connections":         len(a.peerConnections),
-		"total_connections_created":  len(a.peerConnections),
-		"uptime_seconds":             int(time.Since(time.Now()).Seconds()),
-		"rooms_active":               0,
-		"timestamp":                  time.Now().UTC().Format(time.RFC3339),
-	})
+func (a *App) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	metrics := map[string]interface{}{
+		"active_connections":        len(a.peerConnections),
+		"total_connections_created": len(a.peerConnections),
+		"uptime_seconds":            int(time.Since(time.Now()).Seconds()),
+		"rooms_active":              0,
+		"timestamp":                 time.Now().UTC().Format(time.RFC3339),
+	}
+	
+	if err := json.NewEncoder(w).Encode(metrics); err != nil {
+		a.log.Errorf("Error encoding metrics response: %v", err)
+	}
 }
 
 // shutdown closes all peer connections and cleans up resources

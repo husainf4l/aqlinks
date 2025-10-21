@@ -1,84 +1,99 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/pion/logging"
+)
+
+// ContextKey is a type for context keys
+type ContextKey string
+
+const (
+	ClaimsKey    ContextKey = "claims"
+	CompanyIDKey ContextKey = "company_id"
+	APIKeyKey    ContextKey = "api_key"
 )
 
 // AuthMiddleware validates JWT token in Authorization header
-func AuthMiddleware(secretKey string) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		// Get authorization header
-		authHeader := c.Get("Authorization")
-		if authHeader == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "missing authorization header",
-			})
-		}
+func AuthMiddleware(secretKey string, logger logging.LeveledLogger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Get authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				respondJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "missing authorization header",
+				})
+				return
+			}
 
-		// Extract bearer token
-		const bearerSchema = "Bearer "
-		token := strings.TrimPrefix(authHeader, bearerSchema)
-		if token == authHeader {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "invalid authorization header format",
-			})
-		}
+			// Extract bearer token
+			const bearerSchema = "Bearer "
+			token := strings.TrimPrefix(authHeader, bearerSchema)
+			if token == authHeader {
+				respondJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "invalid authorization header format",
+				})
+				return
+			}
 
-		// Validate token
-		claims, err := ValidateToken(token, secretKey)
-		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "invalid or expired token: " + err.Error(),
-			})
-		}
+			// Validate token
+			claims, err := ValidateToken(token, secretKey)
+			if err != nil {
+				respondJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "invalid or expired token: " + err.Error(),
+				})
+				return
+			}
 
-		// Store claims in context for use in handlers
-		c.Locals("claims", claims)
-		c.Locals("company_id", claims.CompanyID)
-
-		return c.Next()
+			// Store claims in request context
+			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
+			ctx = context.WithValue(ctx, CompanyIDKey, claims.CompanyID)
+			
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 }
 
 // APIKeyMiddleware validates API key in Authorization header
-func APIKeyMiddleware() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		// Get authorization header
-		authHeader := c.Get("Authorization")
-		if authHeader == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "missing authorization header",
-			})
-		}
+func APIKeyMiddleware(logger logging.LeveledLogger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Get authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				respondJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "missing authorization header",
+				})
+				return
+			}
 
-		// Extract bearer token (API key)
-		const bearerSchema = "Bearer "
-		apiKey := strings.TrimPrefix(authHeader, bearerSchema)
-		if apiKey == authHeader {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "invalid authorization header format",
-			})
-		}
+			// Extract bearer token (API key)
+			const bearerSchema = "Bearer "
+			apiKey := strings.TrimPrefix(authHeader, bearerSchema)
+			if apiKey == authHeader {
+				respondJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "invalid authorization header format",
+				})
+				return
+			}
 
-		// Store API key in context
-		c.Locals("api_key", apiKey)
-
-		return c.Next()
+			// Store API key in context
+			ctx := context.WithValue(r.Context(), APIKeyKey, apiKey)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 }
 
-// CompanyOwnershipMiddleware ensures user can only access their own resources
-func CompanyOwnershipMiddleware(c *fiber.Ctx) error {
-	// Get company ID from context (set by auth middleware)
-	companyID := c.Locals("company_id")
-	if companyID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "company id not found in context",
-		})
+// respondJSON writes a JSON response
+func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// Log but don't respond as headers already sent
 	}
-
-	// You can add additional checks here if needed
-	return c.Next()
 }
