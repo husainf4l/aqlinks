@@ -16,11 +16,12 @@ var (
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
-	log = logging.NewDefaultLoggerFactory().NewLogger("sfu-ws")
 )
 
 // HandlerContext holds all the state needed by the handler
 type HandlerContext struct {
+	Upgrader              websocket.Upgrader
+	Logger                logging.LeveledLogger
 	ListLock              sync.RWMutex
 	PeerConnections       *[]types.PeerConnectionState
 	TrackLocals           *map[string]*webrtc.TrackLocalStaticRTP
@@ -40,15 +41,15 @@ func InitContext(ctx *HandlerContext) {
 // Handle incoming websockets.
 func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	if handlerCtx == nil {
-		log.Errorf("Handler context not initialized")
+		handlerCtx.Logger.Errorf("Handler context not initialized")
 		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
 
 	// Upgrade HTTP request to Websocket
-	unsafeConn, err := upgrader.Upgrade(w, r, nil)
+	unsafeConn, err := handlerCtx.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade HTTP to Websocket: ", err)
+		handlerCtx.Logger.Errorf("Failed to upgrade HTTP to Websocket: ", err)
 
 		return
 	}
@@ -61,7 +62,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	// Create new PeerConnection
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
-		log.Errorf("Failed to creates a PeerConnection: %v", err)
+		handlerCtx.Logger.Errorf("Failed to creates a PeerConnection: %v", err)
 
 		return
 	}
@@ -74,7 +75,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		if _, err := peerConnection.AddTransceiverFromKind(typ, webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionRecvonly,
 		}); err != nil {
-			log.Errorf("Failed to add transceiver: %v", err)
+			handlerCtx.Logger.Errorf("Failed to add transceiver: %v", err)
 
 			return
 		}
@@ -94,29 +95,29 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		// Using Marshal will result in errors around `sdpMid`
 		candidateString, err := json.Marshal(i.ToJSON())
 		if err != nil {
-			log.Errorf("Failed to marshal candidate to json: %v", err)
+			handlerCtx.Logger.Errorf("Failed to marshal candidate to json: %v", err)
 
 			return
 		}
 
-		log.Infof("Send candidate to client: %s", candidateString)
+		handlerCtx.Logger.Infof("Send candidate to client: %s", candidateString)
 
 		if writeErr := c.WriteJSON(&types.WebsocketMessage{
 			Event: "candidate",
 			Data:  string(candidateString),
 		}); writeErr != nil {
-			log.Errorf("Failed to write JSON: %v", writeErr)
+			handlerCtx.Logger.Errorf("Failed to write JSON: %v", writeErr)
 		}
 	})
 
 	// If PeerConnection is closed remove it from global list
 	peerConnection.OnConnectionStateChange(func(p webrtc.PeerConnectionState) {
-		log.Infof("Connection state change: %s", p)
+		handlerCtx.Logger.Infof("Connection state change: %s", p)
 
 		switch p {
 		case webrtc.PeerConnectionStateFailed:
 			if err := peerConnection.Close(); err != nil {
-				log.Errorf("Failed to close PeerConnection: %v", err)
+				handlerCtx.Logger.Errorf("Failed to close PeerConnection: %v", err)
 			}
 		case webrtc.PeerConnectionStateClosed:
 			handlerCtx.SignalPeerConnections()
@@ -125,7 +126,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	})
 
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		log.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
+		handlerCtx.Logger.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
 
 		// Create a track to fan out our incoming video to all peers
 		trackLocal := handlerCtx.AddTrack(t)
@@ -141,7 +142,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 			}
 
 			if err = rtpPkt.Unmarshal(buf[:i]); err != nil {
-				log.Errorf("Failed to unmarshal incoming RTP packet: %v", err)
+				handlerCtx.Logger.Errorf("Failed to unmarshal incoming RTP packet: %v", err)
 
 				return
 			}
@@ -156,7 +157,7 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	})
 
 	peerConnection.OnICEConnectionStateChange(func(is webrtc.ICEConnectionState) {
-		log.Infof("ICE connection state changed: %s", is)
+		handlerCtx.Logger.Infof("ICE connection state changed: %s", is)
 	})
 
 	// Signal for the new PeerConnection
@@ -168,18 +169,18 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		if err != nil {
 			// Check if it's a normal close (user left)
 			if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Infof("Client disconnected normally")
+				handlerCtx.Logger.Infof("Client disconnected normally")
 			} else {
-				log.Errorf("Failed to read message: %v", err)
+				handlerCtx.Logger.Errorf("Failed to read message: %v", err)
 			}
 
 			return
 		}
 
-		log.Infof("Got message: %s", raw)
+		handlerCtx.Logger.Infof("Got message: %s", raw)
 
 		if err := json.Unmarshal(raw, &message); err != nil {
-			log.Errorf("Failed to unmarshal json to message: %v", err)
+			handlerCtx.Logger.Errorf("Failed to unmarshal json to message: %v", err)
 
 			return
 		}
@@ -188,30 +189,30 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		case "candidate":
 			candidate := webrtc.ICECandidateInit{}
 			if err := json.Unmarshal([]byte(message.Data), &candidate); err != nil {
-				log.Errorf("Failed to unmarshal json to candidate: %v", err)
+				handlerCtx.Logger.Errorf("Failed to unmarshal json to candidate: %v", err)
 
 				return
 			}
 
-			log.Infof("Got candidate: %v", candidate)
+			handlerCtx.Logger.Infof("Got candidate: %v", candidate)
 
 			if err := peerConnection.AddICECandidate(candidate); err != nil {
-				log.Errorf("Failed to add ICE candidate: %v", err)
+				handlerCtx.Logger.Errorf("Failed to add ICE candidate: %v", err)
 
 				return
 			}
 		case "answer":
 			answer := webrtc.SessionDescription{}
 			if err := json.Unmarshal([]byte(message.Data), &answer); err != nil {
-				log.Errorf("Failed to unmarshal json to answer: %v", err)
+				handlerCtx.Logger.Errorf("Failed to unmarshal json to answer: %v", err)
 
 				return
 			}
 
-			log.Infof("Got answer: %v", answer)
+			handlerCtx.Logger.Infof("Got answer: %v", answer)
 
 			if err := peerConnection.SetRemoteDescription(answer); err != nil {
-				log.Errorf("Failed to set remote description: %v", err)
+				handlerCtx.Logger.Errorf("Failed to set remote description: %v", err)
 
 				return
 			}
@@ -223,12 +224,12 @@ func WebsocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 				Time:    "15:04:05",
 			}
 
-			log.Infof("Broadcasting chat message: %s", message.Data)
+			handlerCtx.Logger.Infof("Broadcasting chat message: %s", message.Data)
 
 			// Broadcast to all other peers
 			handlerCtx.BroadcastChat(chatMsg, c)
 		default:
-			log.Errorf("unknown message: %+v", message)
+			handlerCtx.Logger.Errorf("unknown message: %+v", message)
 		}
 	}
 }

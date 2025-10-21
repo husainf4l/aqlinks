@@ -9,12 +9,11 @@ import (
 	"github.com/pion/logging"
 )
 
-var log = logging.NewDefaultLoggerFactory().NewLogger("sfu-ws")
-
 // RouteHandlers holds the dependencies for route setup
 type RouteHandlers struct {
-	IndexTemplate       *template.Template
-	DispatchKeyFrame    func()
+	Logger           logging.LeveledLogger
+	IndexTemplate    *template.Template
+	DispatchKeyFrame func()
 }
 
 // Setup registers all HTTP routes
@@ -32,7 +31,7 @@ func Setup(routeHandlers *RouteHandlers) error {
 		wsURL := scheme + r.Host + "/aq_server/websocket"
 
 		if err := routeHandlers.IndexTemplate.Execute(w, wsURL); err != nil {
-			log.Errorf("Failed to parse index template: %v", err)
+			routeHandlers.Logger.Errorf("Failed to parse index template: %v", err)
 		}
 	})
 

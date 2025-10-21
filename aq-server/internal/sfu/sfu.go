@@ -11,10 +11,9 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-var log = logging.NewDefaultLoggerFactory().NewLogger("sfu-ws")
-
 // SFUContext holds the state needed by SFU functions
 type SFUContext struct {
+	Logger          logging.LeveledLogger
 	ListLock        sync.RWMutex
 	PeerConnections *[]types.PeerConnectionState
 	TrackLocals     *map[string]*webrtc.TrackLocalStaticRTP
@@ -156,12 +155,12 @@ func SignalPeerConnections() { // nolint
 
 			offerString, err := json.Marshal(offer)
 			if err != nil {
-				log.Errorf("Failed to marshal offer to json: %v", err)
+				sfuCtx.Logger.Errorf("Failed to marshal offer to json: %v", err)
 
 				return true
 			}
 
-			log.Infof("Send offer to client: %v", offer)
+			sfuCtx.Logger.Infof("Send offer to client: %v", offer)
 
 			if err = (*sfuCtx.PeerConnections)[i].Websocket.WriteJSON(&types.WebsocketMessage{
 				Event: "offer",
@@ -207,7 +206,7 @@ func BroadcastChat(msg types.ChatMessage, sender *types.ThreadSafeWriter) {
 		}
 
 		if err := (*sfuCtx.PeerConnections)[i].Websocket.WriteJSON(msg); err != nil {
-			log.Errorf("Failed to send chat message: %v", err)
+			sfuCtx.Logger.Errorf("Failed to send chat message: %v", err)
 		}
 	}
 }
