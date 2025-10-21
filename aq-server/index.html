@@ -92,12 +92,102 @@
       #remoteVideos video {
         max-width: 320px;
       }
+      /* Room Selection Modal */
+      .modal {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+      }
+      .modal.hidden {
+        display: none;
+      }
+      .modal-content {
+        background-color: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        min-width: 400px;
+        text-align: center;
+      }
+      .modal-content h2 {
+        margin-top: 0;
+        color: #333;
+      }
+      .form-group {
+        margin-bottom: 20px;
+        text-align: left;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        color: #555;
+        font-weight: bold;
+      }
+      .form-group input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      .form-group input:focus {
+        outline: none;
+        border-color: #2196F3;
+      }
+      .modal-button {
+        width: 100%;
+        padding: 12px;
+        background: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        font-size: 14px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      .modal-button:hover {
+        background: #45a049;
+      }
+      .room-badge {
+        background: #e3f2fd;
+        padding: 8px 12px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        font-size: 13px;
+        color: #1976D2;
+      }
     </style>
   </head>
   <body>
+    <!-- Room Selection Modal -->
+    <div id="roomModal" class="modal">
+      <div class="modal-content">
+        <h2>🏠 Join Video Room</h2>
+        <div class="form-group">
+          <label for="roomInput">Room ID:</label>
+          <input type="text" id="roomInput" placeholder="e.g., room-123" value="default">
+        </div>
+        <div class="form-group">
+          <label for="usernameInput">Your Name:</label>
+          <input type="text" id="usernameInput" placeholder="Enter your name" value="User">
+        </div>
+        <button class="modal-button" id="joinBtn">Join Room</button>
+      </div>
+    </div>
     <div class="container">
       <div class="video-section">
         <h3>📹 Local Video</h3>
+        <div id="roomBadge" class="room-badge" style="display:none;">
+          📍 <strong id="roomName">default</strong> | 👤 <strong id="userName">User</strong>
+        </div>
         <video id="localVideo" width="320" height="240" autoplay muted></video>
 
         <h3>👥 Remote Videos</h3>
@@ -116,11 +206,81 @@
   </body>
 
   <script>
+    // Room and connection state
+    let currentRoom = 'default'
+    let currentUsername = 'User'
+    let roomJoined = false
+
     // Connection state
     let reconnectAttempts = 0
     const maxReconnectAttempts = 10
-    const baseReconnectDelay = 1000 // 1 second
+    const baseReconnectDelay = 1000
     let reconnectTimer = null
+
+    // Room management functions
+    function getUrlParams() {
+      const params = new URLSearchParams(window.location.search)
+      return {
+        room: params.get('room') || '',
+        username: params.get('username') || ''
+      }
+    }
+
+    function showRoomBadge(room, username) {
+      document.getElementById('roomName').textContent = room
+      document.getElementById('userName').textContent = username
+      document.getElementById('roomBadge').style.display = 'block'
+      currentRoom = room
+      currentUsername = username
+    }
+
+    function hideRoomModal() {
+      document.getElementById('roomModal').classList.add('hidden')
+    }
+
+    function showRoomModal() {
+      document.getElementById('roomModal').classList.remove('hidden')
+    }
+
+    function handleRoomJoin() {
+      const room = document.getElementById('roomInput').value.trim() || 'default'
+      const username = document.getElementById('usernameInput').value.trim() || 'User'
+      showRoomBadge(room, username)
+      hideRoomModal()
+      roomJoined = true
+      return { room, username }
+    }
+
+    function initRoomSelection() {
+      const urlParams = getUrlParams()
+      
+      // If URL has room params, use directly without modal
+      if (urlParams.room) {
+        const room = urlParams.room
+        const username = urlParams.username || 'User'
+        showRoomBadge(room, username)
+        hideRoomModal()
+        return Promise.resolve({ room, username })
+      }
+      
+      // Show modal for manual entry
+      showRoomModal()
+      
+      return new Promise((resolve) => {
+        document.getElementById('joinBtn').onclick = () => {
+          const result = handleRoomJoin()
+          resolve(result)
+        }
+        
+        // Enter key to submit
+        document.getElementById('usernameInput').addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            const result = handleRoomJoin()
+            resolve(result)
+          }
+        })
+      })
+    }
 
     // Chat functions
     function addChatMessage(message, time) {
@@ -176,24 +336,32 @@
     function scheduleReconnect(stream, pc) {
       if (reconnectAttempts >= maxReconnectAttempts) {
         console.error('Max reconnection attempts reached')
-        addChatMessage('Connection lost - max reconnect attempts reached', new Date().toLocaleTimeString())
+        addChatMessage('Connection lost', new Date().toLocaleTimeString())
         return
       }
 
       const delay = getReconnectDelay(reconnectAttempts)
       reconnectAttempts++
       
-      console.log(`Scheduling reconnect in ${Math.round(delay)}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`)
-      addChatMessage(`Reconnecting in ${Math.round(delay / 1000)}s... (attempt ${reconnectAttempts})`, new Date().toLocaleTimeString())
+      console.log(`Reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`)
+      addChatMessage(`Reconnecting...`, new Date().toLocaleTimeString())
 
       reconnectTimer = setTimeout(() => {
-        initializeWebSocket(stream, pc)
+        initializeWebSocket(stream, pc, currentRoom, currentUsername)
       }, delay)
     }
 
     // Initialize WebSocket with reconnection logic
-    function initializeWebSocket(stream, pc) {
-      let ws = new WebSocket("{{.}}")
+    function initializeWebSocket(stream, pc, room, username) {
+      // Use the WebSocket URL provided by the server template
+      const baseWsUrl = "{{.}}"
+      
+      // Append room and username to the WebSocket URL
+      const separator = baseWsUrl.includes('?') ? '&' : '?'
+      const wsUrl = `${baseWsUrl}${separator}room=${encodeURIComponent(room)}&username=${encodeURIComponent(username)}`
+      
+      console.log('Connecting to WebSocket:', wsUrl)
+      let ws = new WebSocket(wsUrl)
       
       ws.onopen = function() {
         console.log('WebSocket connected')
@@ -272,38 +440,51 @@
       return ws
     }
 
-    // WebRTC and Chat initialization
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-    .then(stream => {
-      let pc = new RTCPeerConnection()
-      pc.ontrack = function (event) {
-        if (event.track.kind === 'audio') {
-          return
-        }
+    // Initialize application
+    async function initialize() {
+      try {
+        // Step 1: Get room and username
+        const { room, username } = await initRoomSelection()
+        
+        // Step 2: Get media stream
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        
+        // Step 3: Setup WebRTC
+        let pc = new RTCPeerConnection()
+        pc.ontrack = function (event) {
+          if (event.track.kind === 'audio') {
+            return
+          }
 
-        let el = document.createElement(event.track.kind)
-        el.srcObject = event.streams[0]
-        el.autoplay = true
-        el.controls = true
-        document.getElementById('remoteVideos').appendChild(el)
+          let el = document.createElement(event.track.kind)
+          el.srcObject = event.streams[0]
+          el.autoplay = true
+          el.controls = true
+          document.getElementById('remoteVideos').appendChild(el)
 
-        event.track.onmute = function(event) {
-          el.play()
-        }
+          event.track.onmute = function(event) {
+            el.play()
+          }
 
-        event.streams[0].onremovetrack = ({track}) => {
-          if (el.parentNode) {
-            el.parentNode.removeChild(el)
+          event.streams[0].onremovetrack = ({track}) => {
+            if (el.parentNode) {
+              el.parentNode.removeChild(el)
+            }
           }
         }
+
+        document.getElementById('localVideo').srcObject = stream
+        stream.getTracks().forEach(track => pc.addTrack(track, stream))
+
+        // Step 4: Initialize WebSocket with room/username
+        initializeWebSocket(stream, pc, room, username)
+      } catch (err) {
+        console.error('Initialization error:', err)
+        alert('Error: ' + err.message)
       }
+    }
 
-      document.getElementById('localVideo').srcObject = stream
-
-      stream.getTracks().forEach(track => pc.addTrack(track, stream))
-
-      // Initialize WebSocket with reconnection support
-      initializeWebSocket(stream, pc)
-    }).catch(window.alert)
+    // Start when page loads
+    initialize()
   </script>
 </html>
