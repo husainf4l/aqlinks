@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html>
+  <!--
+    SPDX-FileCopyrightText: 2023 The Pion community <https://pion.ly>
+    SPDX-License-Identifier: MIT
+  -->
+
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background: #f5f5f5;
+      }
+      .container {
+        display: flex;
+        gap: 20px;
+      }
+      .video-section {
+        flex: 2;
+      }
+      .chat-section {
+        flex: 1;
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        max-height: 600px;
+      }
+      #chatMessages {
+        flex: 1;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        background: #fafafa;
+        max-height: 400px;
+      }
+      .chat-message {
+        margin-bottom: 10px;
+        padding: 8px;
+        background: #e3f2fd;
+        border-radius: 5px;
+      }
+      .chat-message .time {
+        font-size: 0.8em;
+        color: #666;
+      }
+      .chat-message .text {
+        margin-top: 5px;
+      }
+      .chat-input-container {
+        display: flex;
+        gap: 10px;
+      }
+      #chatInput {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+      }
+      #sendBtn {
+        padding: 10px 20px;
+        background: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      #sendBtn:hover {
+        background: #1976D2;
+      }
+      h3 {
+        color: #333;
+        margin-top: 0;
+      }
+      video {
+        border-radius: 8px;
+        background: #000;
+      }
+      #remoteVideos {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      #remoteVideos video {
+        max-width: 320px;
+      }
+      /* Room Selection Modal */
+      .modal {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+      }
+      .modal.hidden {
+        display: none;
+      }
+      .modal-content {
+        background-color: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        min-width: 400px;
+        text-align: center;
+      }
+      .modal-content h2 {
+        margin-top: 0;
+        color: #333;
+      }
+      .form-group {
+        margin-bottom: 20px;
+        text-align: left;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        color: #555;
+        font-weight: bold;
+      }
+      .form-group input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      .form-group input:focus {
+        outline: none;
+        border-color: #2196F3;
+      }
+      .modal-button {
+        width: 100%;
+        padding: 12px;
+        background: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        font-size: 14px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      .modal-button:hover {
+        background: #45a049;
+      }
+      .room-badge {
+        background: #e3f2fd;
+        padding: 8px 12px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        font-size: 13px;
+        color: #1976D2;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Script for CryptoJS (for JWT token generation) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    
+    <!-- Room Selection Modal -->
+    <div id="roomModal" class="modal">
+      <div class="modal-content">
+        <h2>🏠 Join Video Room</h2>
+              <div class="form-group">
+        <label for="roomInput">Room ID:</label>
+        <input type="text" id="roomInput" placeholder="e.g., room-123" value="default">
+      </div>
+      <div class="form-group">
+        <label for="usernameInput">Your Name:</label>
+        <input type="text" id="usernameInput" placeholder="Enter your name" value="User">
+      </div>
+      <div class="form-group">
+        <label for="userTypeInput">Role:</label>
+        <select id="userTypeInput" style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+          <option value="guest">Guest</option>
+          <option value="host">Host</option>
+          <option value="presenter">Presenter</option>
+        </select>
+      </div>
+      <button class="modal-button" id="joinBtn">Join Room</button>
+      </div>
+    </div>
+    <div class="container">
+      <div class="video-section">
+        <h3>📹 Local Video</h3>
+        <div id="roomBadge" class="room-badge" style="display:none;">
+          📍 <strong id="roomName">default</strong> | 👤 <strong id="userName">User</strong>
+        </div>
+        <video id="localVideo" width="320" height="240" autoplay muted></video>
+
+        <h3>👥 Remote Videos</h3>
+        <div id="remoteVideos"></div>
+      </div>
+
+      <div class="chat-section">
+        <h3>💬 Chat</h3>
+        <div id="chatMessages"></div>
+        <div class="chat-input-container">
+          <input type="text" id="chatInput" placeholder="Type a message..." />
+          <button id="sendBtn">Send</button>
+        </div>
+      </div>
+    </div>
+  </body>
+
+  <script>
+    // JWT Configuration
+    const JWT_SECRET = "tt55oo77" // Must match server JWT_SECRET
+    
+    // Room and connection state
+    let currentRoom = 'default'
+    let currentUsername = 'User'
+    let currentUserType = 'guest'
+    let roomJoined = false
+
+    // Connection state
+    let reconnectAttempts = 0
+    const maxReconnectAttempts = 10
+    const baseReconnectDelay = 1000
+    let reconnectTimer = null
+
+    // JWT Token generation function
+    function generateJWTToken(userId, room, userType) {
+      const now = Math.floor(Date.now() / 1000)
+      const exp = now + (24 * 60 * 60) // 24 hour expiration
+      
+      const header = {
+        alg: "HS256",
+        typ: "JWT"
+      }
+      
+      const payload = {
+        user_id: userId,
+        email: `${userId}@example.com`,
+        room: room,
+        user_type: userType,
+        iat: now,
+        exp: exp
+      }
+      
+      const headerEncoded = btoa(JSON.stringify(header)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+      const payloadEncoded = btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+      
+      const signatureInput = `${headerEncoded}.${payloadEncoded}`
+      const signature = CryptoJS.HmacSHA256(signatureInput, JWT_SECRET)
+      const signatureEncoded = signature.toString(CryptoJS.enc.Base64).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+      
+      const token = `${signatureInput}.${signatureEncoded}`
+      return token
+    }
+
+    // Room management functions
+    function getUrlParams() {
+      const params = new URLSearchParams(window.location.search)
+      return {
+        room: params.get('room') || '',
+        username: params.get('username') || ''
+      }
+    }
+
+    function showRoomBadge(room, username, userType) {
+      document.getElementById('roomName').textContent = room
+      document.getElementById('userName').textContent = username
+      document.getElementById('roomBadge').style.display = 'block'
+      currentRoom = room
+      currentUsername = username
+      currentUserType = userType
+    }
+
+    function hideRoomModal() {
+      document.getElementById('roomModal').classList.add('hidden')
+    }
+
+    function showRoomModal() {
+      document.getElementById('roomModal').classList.remove('hidden')
+    }
+
+    function handleRoomJoin() {
+      const room = document.getElementById('roomInput').value.trim() || 'default'
+      const username = document.getElementById('usernameInput').value.trim() || 'User'
+      const userType = document.getElementById('userTypeInput').value || 'guest'
+      showRoomBadge(room, username, userType)
+      hideRoomModal()
+      roomJoined = true
+      return { room, username, userType }
+    }
+
+    function initRoomSelection() {
+      const urlParams = getUrlParams()
+      
+      // If URL has room params, use directly without modal
+      if (urlParams.room) {
+        const room = urlParams.room
+        const username = urlParams.username || 'User'
+        showRoomBadge(room, username, 'guest')
+        hideRoomModal()
+        return Promise.resolve({ room, username, userType: 'guest' })
+      }
+      
+      // Show modal for manual entry
+      showRoomModal()
+      
+      return new Promise((resolve) => {
+        document.getElementById('joinBtn').onclick = () => {
+          const result = handleRoomJoin()
+          resolve(result)
+        }
+        
+        // Enter key to submit
+        document.getElementById('usernameInput').addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            const result = handleRoomJoin()
+            resolve(result)
+          }
+        })
+      })
+    }
+
+    // Chat functions
+    function addChatMessage(message, time) {
+      const chatMessages = document.getElementById('chatMessages')
+      const msgDiv = document.createElement('div')
+      msgDiv.className = 'chat-message'
+      msgDiv.innerHTML = `
+        <div class="time">${time}</div>
+        <div class="text">${escapeHtml(message)}</div>
+      `
+      chatMessages.appendChild(msgDiv)
+      chatMessages.scrollTop = chatMessages.scrollHeight
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div')
+      div.textContent = text
+      return div.innerHTML
+    }
+
+    function sendChatMessage(ws) {
+      const input = document.getElementById('chatInput')
+      const message = input.value.trim()
+      if (!message) return
+
+      // Check if WebSocket is open
+      if (ws.readyState !== WebSocket.OPEN) {
+        console.warn('WebSocket is not connected, message not sent')
+        return
+      }
+
+      // Send to server
+      ws.send(JSON.stringify({
+        event: 'chat',
+        data: message
+      }))
+
+      // Add to own chat (with "You:" prefix)
+      const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      addChatMessage(`You: ${message}`, now)
+      
+      input.value = ''
+    }
+
+    // Calculate exponential backoff with jitter
+    function getReconnectDelay(attempt) {
+      const delay = Math.min(baseReconnectDelay * Math.pow(2, attempt), 30000)
+      const jitter = Math.random() * 1000
+      return delay + jitter
+    }
+
+    // Initiate reconnection with exponential backoff
+    function scheduleReconnect(stream, pc) {
+      if (reconnectAttempts >= maxReconnectAttempts) {
+        console.error('Max reconnection attempts reached')
+        addChatMessage('Connection lost', new Date().toLocaleTimeString())
+        return
+      }
+
+      const delay = getReconnectDelay(reconnectAttempts)
+      reconnectAttempts++
+      
+      console.log(`Reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`)
+      addChatMessage(`Reconnecting...`, new Date().toLocaleTimeString())
+
+      reconnectTimer = setTimeout(() => {
+        initializeWebSocket(stream, pc, currentRoom, currentUsername, currentUserType)
+      }, delay)
+    }
+
+    // Initialize WebSocket with reconnection logic
+    function initializeWebSocket(stream, pc, room, username, userType) {
+      // Generate JWT token
+      const token = generateJWTToken(username, room, userType)
+      
+      // Use the WebSocket URL
+      const SERVER_URL = "http://localhost:8080"
+      const baseWsUrl = `ws://localhost:8080/aq_server/ws`
+      
+      // Append JWT token to the WebSocket URL
+      const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}`
+      
+      console.log('Connecting to WebSocket with JWT token')
+      let ws = new WebSocket(wsUrl)
+      
+      ws.onopen = function() {
+        console.log('WebSocket connected')
+        reconnectAttempts = 0 // Reset on successful connection
+        addChatMessage('Connected to server', new Date().toLocaleTimeString())
+      }
+
+      ws.onclose = function(evt) {
+        console.log('WebSocket closed, scheduling reconnect...')
+        scheduleReconnect(stream, pc)
+      }
+
+      ws.onmessage = function(evt) {
+        let msg = JSON.parse(evt.data)
+        if (!msg) {
+          return console.log('failed to parse msg')
+        }
+
+        switch (msg.event) {
+          case 'offer':
+            let offer = JSON.parse(msg.data)
+            if (!offer) {
+              return console.log('failed to parse offer')
+            }
+            pc.setRemoteDescription(offer)
+            pc.createAnswer().then(answer => {
+              pc.setLocalDescription(answer)
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
+              }
+            })
+            return
+
+          case 'candidate':
+            let candidate = JSON.parse(msg.data)
+            if (!candidate) {
+              return console.log('failed to parse candidate')
+            }
+
+            pc.addIceCandidate(candidate).catch(err => {
+              console.warn('Failed to add ICE candidate:', err)
+            })
+            return
+
+          case 'chat':
+            // Handle incoming chat message
+            addChatMessage(`Remote: ${msg.message}`, msg.time)
+            return
+        }
+      }
+
+      ws.onerror = function(evt) {
+        console.error("WebSocket ERROR: " + evt.data)
+      }
+
+      // Chat button click
+      document.getElementById('sendBtn').addEventListener('click', () => sendChatMessage(ws))
+      
+      // Chat enter key
+      document.getElementById('chatInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          sendChatMessage(ws)
+        }
+      })
+
+      pc.onicecandidate = e => {
+        if (!e.candidate) {
+          return
+        }
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
+        }
+      }
+
+      return ws
+    }
+
+    // Initialize application
+    async function initialize() {
+      try {
+        // Step 1: Get room and username
+        const { room, username, userType } = await initRoomSelection()
+        
+        // Step 2: Get media stream
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        
+        // Step 3: Setup WebRTC
+        let pc = new RTCPeerConnection()
+        pc.ontrack = function (event) {
+          if (event.track.kind === 'audio') {
+            return
+          }
+
+          let el = document.createElement(event.track.kind)
+          el.srcObject = event.streams[0]
+          el.autoplay = true
+          el.controls = true
+          document.getElementById('remoteVideos').appendChild(el)
+
+          event.track.onmute = function(event) {
+            el.play()
+          }
+
+          event.streams[0].onremovetrack = ({track}) => {
+            if (el.parentNode) {
+              el.parentNode.removeChild(el)
+            }
+          }
+        }
+
+        document.getElementById('localVideo').srcObject = stream
+        stream.getTracks().forEach(track => pc.addTrack(track, stream))
+
+        // Step 4: Initialize WebSocket with room/username/userType and JWT token
+        initializeWebSocket(stream, pc, room, username, userType)
+      } catch (err) {
+        console.error('Initialization error:', err)
+        alert('Error: ' + err.message)
+      }
+    }
+
+    // Start when page loads
+    initialize()
+  </script>
+</html>
